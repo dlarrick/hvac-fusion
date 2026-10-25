@@ -5,18 +5,18 @@ from __future__ import annotations
 import logging
 import os
 from datetime import timedelta
-from typing import Any, Dict, Optional
+from typing import Any
 
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.const import (
-    Platform,
-    CONF_NAME,
-    CONF_ID,
-    CONF_UNIQUE_ID,
     CONF_ENTITY_ID,
+    CONF_ID,
+    CONF_NAME,
+    CONF_UNIQUE_ID,
     EVENT_HOMEASSISTANT_STARTED,
+    Platform,
 )
 from homeassistant.core import (
     HomeAssistant,
@@ -25,66 +25,64 @@ from homeassistant.core import (
     SupportsResponse,
 )
 from homeassistant.helpers import discovery
-import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
-
-from .const import (
-    DOMAIN,
-    CONF_OUTDOOR_TEMPERATURE_ENTITY,
-    CONF_SOLAR_EXPORT_ENTITY,
-    CONF_TARIFFS,
-    CONF_CONTROL_ENABLED,
-    CONF_GAS_COST_PER_THERM,
-    CONF_PROPANE_COST_PER_GAL,
-    CONF_ELECTRIC_COST_PER_KWH,
-    CONF_FUEL_TYPE,
-    CONF_PRODUCERS,
-    CONF_SPACES,
-    CONF_TEMP_SENSOR,
-    CONF_WINDOW_SENSOR,
-    CONF_EMITTERS,
-    CONF_PRODUCER,
-    CONF_TYPE,
-    CONF_ZONE_ID,
-    CONF_NOMINAL_BTU,
-    CONF_SHARED_BOILER_ROLE,
-    CONF_PRIORITY,
-    CONF_FLOOR_AREA,
-    CONF_CEILING_HEIGHT,
-    CONF_PROFILE,
-    CONF_RATED_AFUE,
-    CONF_MIN_FIRE_BTU,
-    CONF_OFFSET,
-    CONF_CYCLING_BAND,
-    DEFAULT_CYCLING_BAND,
-    CONF_EVALUATION_INTERVAL_MINUTES,
-    DEFAULT_EVALUATION_INTERVAL_MINUTES,
-    CONF_PRESETS,
-    DEFAULT_HEAT_TO,
-    DEFAULT_COOL_TO,
-)
-
 from hvac_crossover import (
-    DualFuelCoordinator,
+    ComfortRange,
     CoordinatorConfig,
-    SystemTopology,
-    TariffSchedule,
-    Space,
-    MiniSplitHead,
-    HydronicEmitter,
-    SharedBoilerRole,
-    ProducerProfileFactory,
-    ModulatingBoilerProducer,
+    DualFuelCoordinator,
     FuelType,
     HvacMode,
+    HydronicEmitter,
+    MiniSplitHead,
+    ModulatingBoilerProducer,
+    ProducerProfileFactory,
+    SharedBoilerRole,
+    Space,
     SpaceCondition,
-    ComfortRange,
     SystemSnapshot,
+    SystemTopology,
+    TariffSchedule,
+)
+
+from .const import (
+    CONF_CEILING_HEIGHT,
+    CONF_CONTROL_ENABLED,
+    CONF_CYCLING_BAND,
+    CONF_ELECTRIC_COST_PER_KWH,
+    CONF_EMITTERS,
+    CONF_EVALUATION_INTERVAL_MINUTES,
+    CONF_FLOOR_AREA,
+    CONF_FUEL_TYPE,
+    CONF_GAS_COST_PER_THERM,
+    CONF_MIN_FIRE_BTU,
+    CONF_NOMINAL_BTU,
+    CONF_OFFSET,
+    CONF_OUTDOOR_TEMPERATURE_ENTITY,
+    CONF_PRESETS,
+    CONF_PRIORITY,
+    CONF_PRODUCER,
+    CONF_PRODUCERS,
+    CONF_PROFILE,
+    CONF_PROPANE_COST_PER_GAL,
+    CONF_RATED_AFUE,
+    CONF_SHARED_BOILER_ROLE,
+    CONF_SOLAR_EXPORT_ENTITY,
+    CONF_SPACES,
+    CONF_TARIFFS,
+    CONF_TEMP_SENSOR,
+    CONF_TYPE,
+    CONF_WINDOW_SENSOR,
+    CONF_ZONE_ID,
+    DEFAULT_COOL_TO,
+    DEFAULT_CYCLING_BAND,
+    DEFAULT_EVALUATION_INTERVAL_MINUTES,
+    DEFAULT_HEAT_TO,
+    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.CLIMATE]
+PLATFORMS = [Platform.CLIMATE, Platform.SENSOR]
 
 EMITTER_SCHEMA = vol.Schema(
     {
@@ -205,20 +203,27 @@ def _resolve_profile_path(profile_str: str) -> str:
 class HvacFusionManager:
     """Manages coordinator lifecycle, sensor polling, and thermostat actuation."""
 
-    def __init__(self, hass: HomeAssistant, conf: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        conf: dict[str, Any],
+        entry_id: str | None = None,
+    ) -> None:
         self.hass = hass
         self.conf = conf
-        self.space_entities: Dict[str, Any] = {}
-        self.emitter_entity_map: Dict[str, str] = {}
-        self.emitter_types: Dict[str, str] = {}
-        self.emitter_zones: Dict[str, str] = {}
-        self.emitter_offsets: Dict[str, float] = {}
-        self.last_plan: Optional[Any] = None
+        self.entry_id = entry_id
+        self.space_entities: dict[str, Any] = {}
+        self.sensor_entities: list[Any] = []
+        self.emitter_entity_map: dict[str, str] = {}
+        self.emitter_types: dict[str, str] = {}
+        self.emitter_zones: dict[str, str] = {}
+        self.emitter_offsets: dict[str, float] = {}
+        self.last_plan: Any | None = None
         self.control_enabled: bool = conf.get(CONF_CONTROL_ENABLED, True)
         self.cycling_band: float = float(
             conf.get(CONF_CYCLING_BAND, DEFAULT_CYCLING_BAND)
         )
-        self._cycling_state: Dict[str, bool] = {}
+        self._cycling_state: dict[str, bool] = {}
         self._cycling_logged: set[str] = set()
 
         # Collect schedule entities from configured presets
@@ -227,18 +232,103 @@ class HvacFusionManager:
             for sched_id in s_conf.get(CONF_PRESETS, {}).values():
                 self.schedule_entities.add(sched_id)
 
-        self.topology: Optional[SystemTopology] = None
-        self.tariffs: Optional[TariffSchedule] = None
-        self.coordinator: Optional[DualFuelCoordinator] = None
+        self.topology: SystemTopology | None = None
+        self.tariffs: TariffSchedule | None = None
+        self.coordinator: DualFuelCoordinator | None = None
+
+    def register_sensor_entity(self, entity: Any) -> None:
+        """Register a diagnostic sensor entity."""
+        if entity not in self.sensor_entities:
+            self.sensor_entities.append(entity)
+
+    def unregister_sensor_entity(self, entity: Any) -> None:
+        """Unregister a diagnostic sensor entity."""
+        if entity in self.sensor_entities:
+            self.sensor_entities.remove(entity)
+
+    @property
+    def primary_boiler(self) -> Any | None:
+        """Returns the primary boiler producer if configured."""
+        if not self.topology:
+            return None
+        from hvac_crossover import ProducerType
+
+        boiler_types = (
+            ProducerType.MODULATING_BOILER,
+            ProducerType.ATMOSPHERIC_BOILER,
+            ProducerType.STEAM_BOILER,
+        )
+        boilers = [
+            p for p in self.topology.producers if p.producer_type in boiler_types
+        ]
+        return boilers[0] if boilers else None
+
+    @property
+    def primary_heat_pump(self) -> Any | None:
+        """Returns the primary heat pump producer if configured."""
+        if not self.topology:
+            return None
+        from hvac_crossover import ProducerType
+
+        hps = [
+            p
+            for p in self.topology.producers
+            if p.producer_type == ProducerType.INVERTER_HEAT_PUMP
+        ]
+        return hps[0] if hps else None
+
+    @property
+    def break_even_cop(self) -> float | None:
+        """Derives critical break-even COP where Cost_HP ($/MMBtu) == Cost_Boiler ($/MMBtu)."""
+        boiler = self.primary_boiler
+        if not boiler or not self.tariffs or not self.coordinator:
+            return None
+        from hvac_crossover import FuelType
+
+        fuel_type = getattr(boiler, "fuel_type", FuelType.NATURAL_GAS)
+        if fuel_type == FuelType.PROPANE and self.tariffs.propane_cost_per_gal <= 0:
+            return None
+        if fuel_type != FuelType.PROPANE and self.tariffs.gas_cost_per_therm <= 0:
+            return None
+        try:
+            cop = self.coordinator.economics.compute_crossover_cop(self.tariffs, boiler)
+            return round(cop, 2)
+        except (ValueError, TypeError, ZeroDivisionError, AttributeError) as err:
+            _LOGGER.debug("Could not compute break-even COP: %s", err)
+            return None
+
+    @property
+    def economic_crossover_temperature(self) -> float | None:
+        """Outdoor temperature where heat pump and boiler costs are equal."""
+        boiler = self.primary_boiler
+        hp = self.primary_heat_pump
+        if not boiler or not hp or not self.tariffs or not self.coordinator:
+            return None
+        from hvac_crossover import FuelType
+
+        fuel_type = getattr(boiler, "fuel_type", FuelType.NATURAL_GAS)
+        if fuel_type == FuelType.PROPANE and self.tariffs.propane_cost_per_gal <= 0:
+            return None
+        if fuel_type != FuelType.PROPANE and self.tariffs.gas_cost_per_therm <= 0:
+            return None
+        try:
+            temp = self.coordinator.economics.compute_crossover_temperature(
+                tariffs=self.tariffs,
+                odu=hp,
+                boiler=boiler,
+            )
+            return round(temp, 1) if temp is not None else None
+        except (ValueError, TypeError, ZeroDivisionError, AttributeError) as err:
+            _LOGGER.debug("Could not compute crossover temperature: %s", err)
+            return None
 
     async def async_init(self) -> None:
         """Asynchronously load topology profiles and build coordinator."""
         self.topology = await self.hass.async_add_executor_job(self._build_topology)
-        gas_cost = float(self.conf[CONF_TARIFFS].get(CONF_GAS_COST_PER_THERM, 0.0))
-        propane_cost = float(
-            self.conf[CONF_TARIFFS].get(CONF_PROPANE_COST_PER_GAL, 0.0)
-        )
-        elec_cost = float(self.conf[CONF_TARIFFS][CONF_ELECTRIC_COST_PER_KWH])
+        tariffs_conf = self.conf.get(CONF_TARIFFS, {})
+        gas_cost = float(tariffs_conf.get(CONF_GAS_COST_PER_THERM, 0.0))
+        propane_cost = float(tariffs_conf.get(CONF_PROPANE_COST_PER_GAL, 0.0))
+        elec_cost = float(tariffs_conf.get(CONF_ELECTRIC_COST_PER_KWH, 0.0))
         self.tariffs = TariffSchedule(
             gas_cost_per_therm=gas_cost,
             propane_cost_per_gal=propane_cost,
@@ -248,7 +338,7 @@ class HvacFusionManager:
 
     def _build_topology(self) -> SystemTopology:
         producers = []
-        for p_id, p_conf in self.conf[CONF_PRODUCERS].items():
+        for p_id, p_conf in self.conf.get(CONF_PRODUCERS, {}).items():
             p_name = p_conf.get(CONF_NAME, p_id)
             profile_name = p_conf.get(CONF_PROFILE)
             p_type = p_conf.get(CONF_TYPE, "inverter_heat_pump")
@@ -291,7 +381,7 @@ class HvacFusionManager:
         }
 
         spaces = []
-        for s_conf in self.conf[CONF_SPACES]:
+        for s_conf in self.conf.get(CONF_SPACES, []):
             s_id = s_conf[CONF_ID]
             emitters = []
             for idx, e_conf in enumerate(s_conf[CONF_EMITTERS]):
@@ -342,7 +432,7 @@ class HvacFusionManager:
     def register_space_entity(self, space_id: str, entity: Any) -> None:
         self.space_entities[space_id] = entity
 
-    def get_space_current_temp(self, space_conf: Dict[str, Any]) -> Optional[float]:
+    def get_space_current_temp(self, space_conf: dict[str, Any]) -> float | None:
         sensor_id = space_conf.get(CONF_TEMP_SENSOR)
         if sensor_id:
             state = self.hass.states.get(sensor_id)
@@ -377,7 +467,7 @@ class HvacFusionManager:
 
         return None
 
-    def get_space_window_open(self, space_conf: Dict[str, Any]) -> bool:
+    def get_space_window_open(self, space_conf: dict[str, Any]) -> bool:
         sensor_id = space_conf.get(CONF_WINDOW_SENSOR)
         if sensor_id:
             state = self.hass.states.get(sensor_id)
@@ -401,14 +491,20 @@ class HvacFusionManager:
                     pass
         return 35.0
 
-    async def async_evaluate(self, now: Optional[Any] = None) -> None:
+    async def async_evaluate(self, now: Any | None = None) -> None:
         """Runs the coordination cycle and dispatches commands to physical thermostats."""
         outdoor_temp = self.get_outdoor_temp()
 
-        space_conditions: Dict[str, SpaceCondition] = {}
-        for s_conf in self.conf[CONF_SPACES]:
+        space_conditions: dict[str, SpaceCondition] = {}
+        for s_conf in self.conf.get(CONF_SPACES, []):
             s_id = s_conf[CONF_ID]
             curr_temp = self.get_space_current_temp(s_conf)
+            if curr_temp is None:
+                _LOGGER.debug(
+                    "Space %s: temperature sensor unavailable, skipping this cycle",
+                    s_id,
+                )
+                continue
             window_open = self.get_space_window_open(s_conf)
 
             entity = self.space_entities.get(s_id)
@@ -444,10 +540,14 @@ class HvacFusionManager:
         await self._dispatch_subsidiary_commands(plan, not self.control_enabled)
 
         # Update virtual climate entity states
-        for s_id, entity in self.space_entities.items():
+        for entity in self.space_entities.values():
             s_dir = plan.space_directives.get(s_id)
             entity.update_from_directive(s_dir, plan.diagnostics)
             entity.async_write_ha_state()
+
+        # Update diagnostic sensor entities
+        for sensor in self.sensor_entities:
+            sensor.async_write_ha_state()
 
     async def _dispatch_subsidiary_commands(self, plan: Any, dry_run: bool) -> None:
         """Actuates physical climate entities according to plan directives."""
@@ -1031,13 +1131,13 @@ class HvacFusionManager:
     async def async_handle_schedule_change(self, event: Any) -> None:
         """Handles schedule block transitions."""
         entity_id = event.data.get("entity_id")
-        for s_id, entity in self.space_entities.items():
+        for entity in self.space_entities.values():
             if getattr(entity, "active_schedule_entity", None) == entity_id:
                 await entity.async_update_from_schedule()
         await self.async_evaluate()
 
 
-async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up the HVAC Fusion integration from YAML configuration."""
     if DOMAIN not in config:
         return True
@@ -1049,9 +1149,12 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["manager"] = manager
 
-    # Forward platform setup to climate
+    # Forward platform setup to climate and sensor
     hass.async_create_task(
         discovery.async_load_platform(hass, Platform.CLIMATE, DOMAIN, {}, config)
+    )
+    hass.async_create_task(
+        discovery.async_load_platform(hass, Platform.SENSOR, DOMAIN, {}, config)
     )
 
     # Listen to schedule transitions
@@ -1128,17 +1231,17 @@ async def async_setup_entry(
     conf = dict(entry.data)
     conf.update(entry.options)
 
-    manager = HvacFusionManager(hass, conf)
+    manager = HvacFusionManager(hass, conf, entry_id=entry.entry_id)
     await manager.async_init()
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = manager
     hass.data[DOMAIN]["manager"] = manager
 
+    await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
+
     if manager.topology and manager.topology.spaces:
-        hass.async_create_task(
-            discovery.async_load_platform(hass, Platform.CLIMATE, DOMAIN, {}, conf)
-        )
+        await hass.config_entries.async_forward_entry_setups(entry, [Platform.CLIMATE])
 
     return True
 
@@ -1147,6 +1250,14 @@ async def async_unload_entry(
     hass: HomeAssistant, entry: config_entries.ConfigEntry
 ) -> bool:
     """Unload a config entry."""
-    if entry.entry_id in hass.data.get(DOMAIN, {}):
+    manager = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    unload_platforms = [Platform.SENSOR]
+    if manager and manager.topology and manager.topology.spaces:
+        unload_platforms.append(Platform.CLIMATE)
+
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        entry, unload_platforms
+    )
+    if unload_ok and entry.entry_id in hass.data.get(DOMAIN, {}):
         hass.data[DOMAIN].pop(entry.entry_id)
-    return True
+    return unload_ok

@@ -3,24 +3,23 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.helpers import selector
 
 from .const import (
-    DOMAIN,
-    CONF_OUTDOOR_TEMPERATURE_ENTITY,
+    CONF_CONTROL_ENABLED,
     CONF_ELECTRIC_COST_PER_KWH,
     CONF_GAS_COST_PER_THERM,
-    CONF_PROPANE_COST_PER_GAL,
-    CONF_CONTROL_ENABLED,
-    CONF_TARIFFS,
+    CONF_OUTDOOR_TEMPERATURE_ENTITY,
     CONF_PRODUCERS,
+    CONF_PROPANE_COST_PER_GAL,
     CONF_SPACES,
+    CONF_TARIFFS,
+    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,10 +31,10 @@ class HvacFusionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(
-        self, user_input: Optional[Dict[str, Any]] = None
+        self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Handle the initial hub configuration step."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             title = user_input.get(CONF_NAME, "HVAC Fusion")

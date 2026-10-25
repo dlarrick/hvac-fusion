@@ -1,19 +1,19 @@
 """Tests for HVAC Fusion config flow."""
 
-import pytest
 from unittest.mock import patch
 
+import pytest
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.core import HomeAssistant
 
 from custom_components.hvac_fusion.const import (
-    DOMAIN,
-    CONF_OUTDOOR_TEMPERATURE_ENTITY,
+    CONF_CONTROL_ENABLED,
     CONF_ELECTRIC_COST_PER_KWH,
     CONF_GAS_COST_PER_THERM,
+    CONF_OUTDOOR_TEMPERATURE_ENTITY,
     CONF_PROPANE_COST_PER_GAL,
-    CONF_CONTROL_ENABLED,
     CONF_TARIFFS,
+    DOMAIN,
 )
 
 

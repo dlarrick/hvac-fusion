@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from homeassistant.components.climate import (
+    ATTR_HVAC_MODE,
+    ATTR_TARGET_TEMP_HIGH,
+    ATTR_TARGET_TEMP_LOW,
     ClimateEntity,
     ClimateEntityFeature,
     HVACAction,
     HVACMode,
-    ATTR_HVAC_MODE,
-    ATTR_TARGET_TEMP_HIGH,
-    ATTR_TARGET_TEMP_LOW,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_TEMPERATURE,
     CONF_ID,
@@ -24,16 +25,16 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from hvac_crossover import Diagnostics, HvacAction, SpaceDirective
 
 from .const import (
-    DOMAIN,
-    DEFAULT_HEAT_TO,
-    DEFAULT_COOL_TO,
-    CONF_SPACES,
     CONF_PRESETS,
+    CONF_SPACES,
+    DEFAULT_COOL_TO,
+    DEFAULT_HEAT_TO,
+    DOMAIN,
     PRESET_MANUAL,
 )
-from hvac_crossover import HvacAction, SpaceDirective, Diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ async def async_setup_platform(
     manager = hass.data[DOMAIN]["manager"]
     entities = []
 
-    for s_conf in manager.conf[CONF_SPACES]:
+    for s_conf in manager.conf.get(CONF_SPACES, []):
         entity = HvacFusionSpaceClimate(manager, s_conf)
         manager.register_space_entity(s_conf[CONF_ID], entity)
         entities.append(entity)
@@ -59,6 +60,26 @@ async def async_setup_platform(
     async_add_entities(entities)
 
     # Initialize schedule states
+    for entity in entities:
+        await entity.async_update_from_schedule()
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up climate entities from a config entry."""
+    manager = hass.data[DOMAIN][entry.entry_id]
+    entities = []
+
+    for s_conf in manager.conf.get(CONF_SPACES, []):
+        entity = HvacFusionSpaceClimate(manager, s_conf)
+        manager.register_space_entity(s_conf[CONF_ID], entity)
+        entities.append(entity)
+
+    async_add_entities(entities)
+
     for entity in entities:
         await entity.async_update_from_schedule()
 
@@ -70,23 +91,23 @@ class HvacFusionSpaceClimate(ClimateEntity):
     """Virtual climate entity representing a managed living space."""
 
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
-    _attr_hvac_modes = [
-        HVACMode.HEAT_COOL,
-        HVACMode.HEAT,
-        HVACMode.COOL,
-        HVACMode.OFF,
-    ]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
         | ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.PRESET_MODE
     )
 
-    def __init__(self, manager: Any, space_conf: Dict[str, Any]) -> None:
+    def __init__(self, manager: Any, space_conf: dict[str, Any]) -> None:
         self._manager = manager
         self._space_conf = space_conf
         self._space_id = space_conf[CONF_ID]
 
+        self._attr_hvac_modes = [
+            HVACMode.HEAT_COOL,
+            HVACMode.HEAT,
+            HVACMode.COOL,
+            HVACMode.OFF,
+        ]
         self._attr_name = space_conf[CONF_NAME]
         self._attr_unique_id = space_conf.get(
             CONF_UNIQUE_ID, f"hvac_fusion_{self._space_id}"
@@ -96,43 +117,43 @@ class HvacFusionSpaceClimate(ClimateEntity):
         self._attr_hvac_action = HVACAction.IDLE
 
         # Presets & Schedules
-        self._presets: Dict[str, str] = dict(space_conf.get(CONF_PRESETS, {}))
+        self._presets: dict[str, str] = dict(space_conf.get(CONF_PRESETS, {}))
         self._attr_preset_modes = [PRESET_MANUAL] + list(self._presets.keys())
         self._attr_preset_mode = (
-            list(self._presets.keys())[0] if self._presets else PRESET_MANUAL
+            next(iter(self._presets.keys())) if self._presets else PRESET_MANUAL
         )
 
         self._target_temp_low = DEFAULT_HEAT_TO
         self._target_temp_high = DEFAULT_COOL_TO
         self._target_temp = DEFAULT_HEAT_TO
 
-        self._active_delivery_units: List[str] = []
-        self._active_producer: Optional[str] = None
-        self._economic_crossover: Optional[float] = None
-        self._system_phase: Optional[str] = None
-        self._plan_explanation: Optional[str] = None
+        self._active_delivery_units: list[str] = []
+        self._active_producer: str | None = None
+        self._economic_crossover: float | None = None
+        self._system_phase: str | None = None
+        self._plan_explanation: str | None = None
 
     @property
-    def preset_mode(self) -> Optional[str]:
+    def preset_mode(self) -> str | None:
         return self._attr_preset_mode
 
     @property
-    def active_schedule_entity(self) -> Optional[str]:
+    def active_schedule_entity(self) -> str | None:
         """Returns the active schedule entity ID if currently obeying a schedule preset."""
         if self._attr_preset_mode == PRESET_MANUAL:
             return None
         return self._presets.get(self._attr_preset_mode)
 
     @property
-    def target_temperature_low(self) -> Optional[float]:
+    def target_temperature_low(self) -> float | None:
         return self._target_temp_low
 
     @property
-    def target_temperature_high(self) -> Optional[float]:
+    def target_temperature_high(self) -> float | None:
         return self._target_temp_high
 
     @property
-    def target_temperature(self) -> Optional[float]:
+    def target_temperature(self) -> float | None:
         if self._attr_hvac_mode == HVACMode.HEAT:
             return self._target_temp_low
         if self._attr_hvac_mode == HVACMode.COOL:
@@ -140,11 +161,11 @@ class HvacFusionSpaceClimate(ClimateEntity):
         return self._target_temp
 
     @property
-    def current_temperature(self) -> Optional[float]:
+    def current_temperature(self) -> float | None:
         return self._manager.get_space_current_temp(self._space_conf)
 
     @property
-    def hvac_action(self) -> Optional[HVACAction]:
+    def hvac_action(self) -> HVACAction | None:
         """Pass through active calling state from underlying physical climate entities."""
         if self._attr_hvac_mode == HVACMode.OFF:
             return HVACAction.OFF
@@ -171,7 +192,7 @@ class HvacFusionSpaceClimate(ClimateEntity):
         return self._attr_hvac_action
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         # Determine any emitters in cycling mode for this space
         cycling_emitters = [
             e_id
@@ -192,7 +213,7 @@ class HvacFusionSpaceClimate(ClimateEntity):
         }
         return attrs
 
-    def get_comfort_bounds(self) -> Tuple[Optional[float], Optional[float]]:
+    def get_comfort_bounds(self) -> tuple[float | None, float | None]:
         """Returns (heat_to, cool_to) according to current mode and setpoints."""
         if self._attr_hvac_mode == HVACMode.OFF:
             return None, None
@@ -257,7 +278,7 @@ class HvacFusionSpaceClimate(ClimateEntity):
             self.async_write_ha_state()
 
     def update_from_directive(
-        self, directive: Optional[SpaceDirective], diagnostics: Optional[Diagnostics]
+        self, directive: SpaceDirective | None, diagnostics: Diagnostics | None
     ) -> None:
         """Updates internal status from the coordinator evaluation."""
         if not directive:
