@@ -1,0 +1,124 @@
+# Example configuration.yaml entry for HVAC Fusion (Victorian Home)
+
+# 1. Native Home Assistant Schedule Helpers (with payload data)
+# When active, these populate schedule attributes with mode and setpoint data.
+schedule:
+  primary_br_occupied:
+    name: "Primary BR Occupied Schedule"
+    monday:
+      - from: "06:30:00"
+        to: "08:30:00"
+        data:
+          hvac_mode: heat_cool
+          heat_to: 68.0
+          cool_to: 74.0
+      - from: "21:30:00"
+        to: "06:30:00"
+        data:
+          hvac_mode: heat
+          heat_to: 64.0
+    # (Unconfigured gaps will cause the space to turn 'off')
+
+# 2. HVAC Fusion Integration Configuration
+hvac_fusion:
+  outdoor_temperature_entity: weather.home  # or sensor.outdoor_temperature
+  evaluation_interval_minutes: 5
+
+
+  tariffs:
+    gas_cost_per_therm: 1.88
+    electric_cost_per_kwh: 0.25
+
+  producers:
+    alta150:
+      name: "Burnham Alta 150 Mod-Con"
+      type: modulating_boiler
+      nominal_btu: 150000
+      rated_afue: 0.95
+      min_fire_btu: 20000
+    odu1:
+      name: "Mitsubishi 30k (ODU 1)"
+      type: inverter_heat_pump
+      profile: "mitsubishi/mxz_3c30nahz2"
+    odu2:
+      name: "Mitsubishi 20k (ODU 2)"
+      type: inverter_heat_pump
+      profile: "mitsubishi/mxz_2d20nlhz"
+
+  spaces:
+    - id: "first_floor"
+      name: "First Floor"
+      unique_id: "climate_first_floor_fusion"
+      temp_sensor: climate.first_floor
+      window_sensor: binary_sensor.first_floor_windows
+      priority: 8
+      floor_area_sqft: 900
+      emitters:
+        - type: mini_split
+          producer: odu1
+          entity_id: climate.first_floor
+          nominal_btu: 15000
+        - type: mini_split
+          producer: odu2
+          entity_id: climate.kitchen_kitchen_cassette_climate
+          nominal_btu: 12000
+        - type: hydronic
+          producer: alta150
+          entity_id: climate.first_floor_heat
+          zone_id: z1
+
+    - id: "primary_br"
+      name: "Primary Bedroom"
+      unique_id: "climate_primary_br_fusion"
+      temp_sensor: climate.master_br
+      window_sensor: binary_sensor.bedroom_window
+      priority: 10
+      shared_boiler_role: master
+      floor_area_sqft: 250
+      presets:
+        occupied: schedule.primary_br_occupied
+        guest_visiting: schedule.primary_br_guest_schedule
+      emitters:
+        - type: mini_split
+          producer: odu1
+          entity_id: climate.master_br
+          nominal_btu: 6000
+        - type: hydronic
+          producer: alta150
+          entity_id: climate.second_floor
+          zone_id: z2
+
+
+    - id: "guest_room"
+      name: "Guest Room"
+      unique_id: "climate_guest_room_fusion"
+      temp_sensor: climate.2nd_floor_guest_room_climate
+      priority: 5
+      shared_boiler_role: slave
+      floor_area_sqft: 200
+      emitters:
+        - type: mini_split
+          producer: odu2
+          entity_id: climate.2nd_floor_guest_room_climate
+          nominal_btu: 6000
+        - type: hydronic
+          producer: alta150
+          entity_id: climate.second_floor
+          zone_id: z2
+
+    - id: "loft"
+      name: "3rd Floor Loft"
+      unique_id: "climate_loft_fusion"
+      temp_sensor: climate.loft
+      window_sensor: binary_sensor.skylight2
+      priority: 6
+      floor_area_sqft: 400
+      emitters:
+        - type: mini_split
+          producer: odu1
+          entity_id: climate.loft
+          nominal_btu: 12000
+        - type: hydronic
+          producer: alta150
+          entity_id: climate.loft_heat
+          zone_id: z3

@@ -1,0 +1,15 @@
+get_report:
+  name: Get Plan Report
+  description: Returns a report about the most recent HVAC Fusion plan
+  target:
+    entity:
+      integration: hvac_fusion
+  response:
+    optional: false
+    fields:
+      dir:
+        name: Space Directives
+        description: Current action configuration of spaces
+      diag:
+        name: Diagnostics
+        description: Diagnostic reasons behind decisions

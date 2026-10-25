@@ -1,0 +1,15 @@
+{
+  "domain": "hvac_fusion",
+  "name": "HVAC Fusion",
+  "documentation": "https://github.com/dlarrick/hvac-fusion",
+  "dependencies": [],
+  "requirements": [
+    "hvac-crossover==0.1.4"
+  ],
+  "codeowners": [
+    "@dlarrick"
+  ],
+  "version": "0.1.1",
+  "integration_type": "hub",
+  "iot_class": "local_polling"
+}
