@@ -1,4 +1,4 @@
 pytest
-pytest-homeassistant-custom-component
+pytest-homeassistant-custom-component>=0.13.367
 pre-commit
 ruff
