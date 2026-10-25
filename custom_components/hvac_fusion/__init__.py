@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 import voluptuous as vol
 
+from homeassistant import config_entries
 from homeassistant.const import (
     Platform,
     CONF_NAME,
@@ -1117,4 +1118,35 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
         handle_get_report,
         supports_response=SupportsResponse.ONLY,
     )
+    return True
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> bool:
+    """Set up HVAC Fusion from a config entry."""
+    conf = dict(entry.data)
+    conf.update(entry.options)
+
+    manager = HvacFusionManager(hass, conf)
+    await manager.async_init()
+
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = manager
+    hass.data[DOMAIN]["manager"] = manager
+
+    if manager.topology and manager.topology.spaces:
+        hass.async_create_task(
+            discovery.async_load_platform(hass, Platform.CLIMATE, DOMAIN, {}, conf)
+        )
+
+    return True
+
+
+async def async_unload_entry(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> bool:
+    """Unload a config entry."""
+    if entry.entry_id in hass.data.get(DOMAIN, {}):
+        hass.data[DOMAIN].pop(entry.entry_id)
     return True

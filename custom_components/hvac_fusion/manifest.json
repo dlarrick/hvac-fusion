@@ -9,6 +9,7 @@
   "codeowners": [
     "@dlarrick"
   ],
+  "config_flow": true,
   "version": "0.1.1",
   "integration_type": "hub",
   "iot_class": "local_polling"
