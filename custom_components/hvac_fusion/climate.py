@@ -52,7 +52,8 @@ async def async_setup_platform(
     manager = hass.data[DOMAIN]["manager"]
     entities = []
 
-    for s_conf in manager.conf.get(CONF_SPACES, []):
+    spaces_conf = getattr(manager, "spaces_config", manager.conf.get(CONF_SPACES, []))
+    for s_conf in spaces_conf:
         entity = HvacFusionSpaceClimate(manager, s_conf)
         manager.register_space_entity(s_conf[CONF_ID], entity)
         entities.append(entity)
@@ -73,7 +74,8 @@ async def async_setup_entry(
     manager = hass.data[DOMAIN][entry.entry_id]
     entities = []
 
-    for s_conf in manager.conf.get(CONF_SPACES, []):
+    spaces_conf = getattr(manager, "spaces_config", manager.conf.get(CONF_SPACES, []))
+    for s_conf in spaces_conf:
         entity = HvacFusionSpaceClimate(manager, s_conf)
         manager.register_space_entity(s_conf[CONF_ID], entity)
         entities.append(entity)
