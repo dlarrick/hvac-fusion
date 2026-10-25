@@ -7,6 +7,7 @@ from typing import Any
 
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
+    ATTR_PRESET_MODE,
     ATTR_TARGET_TEMP_HIGH,
     ATTR_TARGET_TEMP_LOW,
     ClimateEntity,
@@ -24,6 +25,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from hvac_crossover import Diagnostics, HvacAction, SpaceDirective
 
@@ -60,10 +62,6 @@ async def async_setup_platform(
 
     async_add_entities(entities)
 
-    # Initialize schedule states
-    for entity in entities:
-        await entity.async_update_from_schedule()
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -82,14 +80,11 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-    for entity in entities:
-        await entity.async_update_from_schedule()
-
     # Trigger initial evaluation once entities are added
     hass.async_create_task(manager.async_evaluate())
 
 
-class HvacFusionSpaceClimate(ClimateEntity):
+class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
     """Virtual climate entity representing a managed living space."""
 
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
@@ -134,6 +129,53 @@ class HvacFusionSpaceClimate(ClimateEntity):
         self._economic_crossover: float | None = None
         self._system_phase: str | None = None
         self._plan_explanation: str | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore previous state on startup."""
+        await super().async_added_to_hass()
+
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            last_preset = last_state.attributes.get(ATTR_PRESET_MODE)
+            if last_preset and last_preset in self._attr_preset_modes:
+                self._attr_preset_mode = last_preset
+
+            if last_state.state in self._attr_hvac_modes:
+                self._attr_hvac_mode = HVACMode(last_state.state)
+
+            if (
+                ATTR_TARGET_TEMP_LOW in last_state.attributes
+                and last_state.attributes[ATTR_TARGET_TEMP_LOW] is not None
+            ):
+                try:
+                    self._target_temp_low = float(
+                        last_state.attributes[ATTR_TARGET_TEMP_LOW]
+                    )
+                except (ValueError, TypeError):
+                    pass
+
+            if (
+                ATTR_TARGET_TEMP_HIGH in last_state.attributes
+                and last_state.attributes[ATTR_TARGET_TEMP_HIGH] is not None
+            ):
+                try:
+                    self._target_temp_high = float(
+                        last_state.attributes[ATTR_TARGET_TEMP_HIGH]
+                    )
+                except (ValueError, TypeError):
+                    pass
+
+            if (
+                ATTR_TEMPERATURE in last_state.attributes
+                and last_state.attributes[ATTR_TEMPERATURE] is not None
+            ):
+                try:
+                    self._target_temp = float(last_state.attributes[ATTR_TEMPERATURE])
+                except (ValueError, TypeError):
+                    pass
+
+        if self._attr_preset_mode != PRESET_MANUAL:
+            await self.async_update_from_schedule()
 
     @property
     def preset_mode(self) -> str | None:
