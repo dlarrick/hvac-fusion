@@ -172,11 +172,17 @@ class HvacFusionSpaceClimate(ClimateEntity):
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
+        # Determine any emitters in cycling mode for this space
+        cycling_emitters = [
+            e_id for e_id in self._active_delivery_units
+            if e_id in getattr(self._manager, "_cycling_state", {})
+        ]
         attrs = {
             "space_id": self._space_id,
             "preset_mode": self._attr_preset_mode,
             "active_schedule": self.active_schedule_entity,
             "active_delivery_units": self._active_delivery_units,
+            "cycling_emitters": cycling_emitters,
             "active_producer": self._active_producer,
             "economic_crossover_temp": self._economic_crossover,
             "system_phase": self._system_phase,

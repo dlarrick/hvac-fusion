@@ -42,6 +42,9 @@ CONF_OFFSET = "offset"
 CONF_EVALUATION_INTERVAL_MINUTES = "evaluation_interval_minutes"
 DEFAULT_EVALUATION_INTERVAL_MINUTES = 5
 
+CONF_CYCLING_BAND = "cycling_band_deg"
+DEFAULT_CYCLING_BAND = 2.0
+
 CONF_PRESETS = "presets"
 PRESET_MANUAL = "manual"
 
