@@ -22,5 +22,15 @@
     "abort": {
       "already_configured": "Coordinator hub is already configured"
     }
+  },
+  "entity": {
+    "sensor": {
+      "economic_crossover_temperature": {
+        "name": "Economic crossover temperature"
+      },
+      "break_even_cop": {
+        "name": "Break-even COP"
+      }
+    }
   }
 }
