@@ -1,15 +1,13 @@
 """Foundational integration tests for HVAC Fusion."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
 
 from homeassistant.core import HomeAssistant
-from homeassistant.components.climate import HVACMode, HVACAction
+from homeassistant.components.climate import HVACAction
 from homeassistant.const import CONF_ENTITY_ID, CONF_NAME, CONF_ID
 
-from custom_components.hvac_fusion import HvacFusionManager, async_setup
+from custom_components.hvac_fusion import HvacFusionManager
 from custom_components.hvac_fusion.const import (
-    DOMAIN,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
     CONF_TARIFFS,
     CONF_ELECTRIC_COST_PER_KWH,
@@ -22,7 +20,11 @@ from custom_components.hvac_fusion.const import (
     CONF_NOMINAL_BTU,
 )
 from custom_components.hvac_fusion.climate import HvacFusionSpaceClimate
-from hvac_crossover import SpaceDirective, HvacMode as LibHvacMode, HvacAction as LibHvacAction
+from hvac_crossover import (
+    SpaceDirective,
+    HvacMode as LibHvacMode,
+    HvacAction as LibHvacAction,
+)
 
 
 def test_manager_build_topology():

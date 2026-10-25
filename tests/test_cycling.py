@@ -4,12 +4,10 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant.core import HomeAssistant
-from homeassistant.components.climate import HVACMode
 from homeassistant.const import CONF_ENTITY_ID, CONF_NAME, CONF_ID
 
 from custom_components.hvac_fusion import HvacFusionManager
 from custom_components.hvac_fusion.const import (
-    DOMAIN,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
     CONF_TARIFFS,
     CONF_ELECTRIC_COST_PER_KWH,
@@ -21,16 +19,11 @@ from custom_components.hvac_fusion.const import (
     CONF_PRODUCER,
     CONF_NOMINAL_BTU,
     CONF_ZONE_ID,
-    CONF_OFFSET,
     CONF_TEMP_SENSOR,
     CONF_CYCLING_BAND,
 )
 from hvac_crossover import (
-    SystemTopology,
-    TariffSchedule,
-    DualFuelCoordinator,
     SpaceDirective,
-    ProducerDirective,
     HvacMode as LibHvacMode,
     HvacAction as LibHvacAction,
 )
@@ -104,7 +97,9 @@ async def test_normal_unclamped_operation(mock_hass, basic_config):
     manager.emitter_types[ms_e_id] = "mini_split"
 
     # Mini split limits: min=61, max=86. Target=68 -> within limits
-    mock_hass.states.get.return_value = make_state("heat", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 65.0})
+    mock_hass.states.get.return_value = make_state(
+        "heat", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 65.0}
+    )
 
     plan = MagicMock()
     plan.producer_directives = {}
@@ -145,7 +140,9 @@ async def test_mini_split_heat_clamped_cycles_on_when_cold(mock_hass, basic_conf
         if entity_id == "sensor.lr_temp":
             return make_state("55.0", {"current_temperature": 55.0})
         if entity_id == "climate.lr_minisplit":
-            return make_state("off", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 61.0})
+            return make_state(
+                "off", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 61.0}
+            )
         return None
 
     mock_hass.states.get.side_effect = states_get
@@ -197,7 +194,9 @@ async def test_mini_split_heat_clamped_cycles_off_when_warm(mock_hass, basic_con
         if entity_id == "sensor.lr_temp":
             return make_state("60.5", {"current_temperature": 60.5})
         if entity_id == "climate.lr_minisplit":
-            return make_state("heat", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 61.0})
+            return make_state(
+                "heat", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 61.0}
+            )
         return None
 
     mock_hass.states.get.side_effect = states_get
@@ -242,7 +241,9 @@ async def test_cooling_clamped_cycles_correctly(mock_hass, basic_config):
         if entity_id == "sensor.lr_temp":
             return make_state("91.0", {"current_temperature": 91.0})
         if entity_id == "climate.lr_minisplit":
-            return make_state("off", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 86.0})
+            return make_state(
+                "off", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 86.0}
+            )
         return None
 
     mock_hass.states.get.side_effect = states_get
@@ -267,7 +268,9 @@ async def test_cooling_clamped_cycles_correctly(mock_hass, basic_config):
         if entity_id == "sensor.lr_temp":
             return make_state("85.0", {"current_temperature": 85.0})
         if entity_id == "climate.lr_minisplit":
-            return make_state("cool", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 86.0})
+            return make_state(
+                "cool", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 86.0}
+            )
         return None
 
     mock_hass.states.get.side_effect = states_get_cooled
@@ -288,7 +291,9 @@ async def test_sensor_unavailable_fallback(mock_hass, basic_config):
         if entity_id == "sensor.lr_temp":
             return make_state("unavailable")
         if entity_id == "climate.lr_minisplit":
-            return make_state("off", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 65.0})
+            return make_state(
+                "off", {"min_temp": 61.0, "max_temp": 86.0, "temperature": 65.0}
+            )
         return None
 
     mock_hass.states.get.side_effect = states_get
@@ -327,7 +332,9 @@ async def test_clearing_cycling_when_unclamped_or_inactive(mock_hass, basic_conf
     manager.emitter_types[ms_e_id] = "mini_split"
     manager._cycling_state[ms_e_id] = True
 
-    mock_hass.states.get.return_value = make_state("off", {"min_temp": 61.0, "max_temp": 86.0})
+    mock_hass.states.get.return_value = make_state(
+        "off", {"min_temp": 61.0, "max_temp": 86.0}
+    )
 
     # Plan sets space to OFF
     plan = MagicMock()
