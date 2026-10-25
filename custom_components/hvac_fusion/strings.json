@@ -1,0 +1,26 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HVAC Fusion Setup",
+        "description": "Configure the HVAC Fusion coordinator hub. You can register equipment and spaces after setup via Configure.",
+        "data": {
+          "name": "Coordinator Name",
+          "outdoor_temperature_entity": "Outdoor Temperature Sensor",
+          "electric_cost_per_kwh": "Electricity Rate ($/kWh)",
+          "gas_cost_per_therm": "Natural Gas Rate ($/therm)",
+          "propane_cost_per_gal": "Propane Rate ($/gal)",
+          "control_enabled": "Enable Physical Control (Uncheck for Dry-Run / Monitoring mode)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Coordinator hub is already configured"
+    }
+  }
+}
