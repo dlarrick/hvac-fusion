@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import voluptuous as vol
 
@@ -17,8 +17,13 @@ from homeassistant.const import (
     CONF_ENTITY_ID,
     EVENT_HOMEASSISTANT_STARTED,
 )
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
-from homeassistant.helpers import discovery, entity_platform
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
+from homeassistant.helpers import discovery
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 
@@ -49,10 +54,11 @@ from .const import (
     CONF_RATED_AFUE,
     CONF_MIN_FIRE_BTU,
     CONF_OFFSET,
+    CONF_CYCLING_BAND,
+    DEFAULT_CYCLING_BAND,
     CONF_EVALUATION_INTERVAL_MINUTES,
     DEFAULT_EVALUATION_INTERVAL_MINUTES,
     CONF_PRESETS,
-    PRESET_MANUAL,
     DEFAULT_HEAT_TO,
     DEFAULT_COOL_TO,
 )
@@ -68,10 +74,8 @@ from hvac_crossover import (
     SharedBoilerRole,
     ProducerProfileFactory,
     ModulatingBoilerProducer,
-    ProducerType,
     FuelType,
     HvacMode,
-    HvacAction,
     SpaceCondition,
     ComfortRange,
     SystemSnapshot,
@@ -119,8 +123,12 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_CONTROL_ENABLED): vol.Coerce(bool),
                 vol.Required(CONF_TARIFFS): vol.Schema(
                     {
-                        vol.Optional(CONF_GAS_COST_PER_THERM, default=0.0): vol.Coerce(float),
-                        vol.Optional(CONF_PROPANE_COST_PER_GAL, default=0.0): vol.Coerce(float),
+                        vol.Optional(CONF_GAS_COST_PER_THERM, default=0.0): vol.Coerce(
+                            float
+                        ),
+                        vol.Optional(
+                            CONF_PROPANE_COST_PER_GAL, default=0.0
+                        ): vol.Coerce(float),
                         vol.Required(CONF_ELECTRIC_COST_PER_KWH): vol.Coerce(float),
                     }
                 ),
@@ -130,16 +138,32 @@ CONFIG_SCHEMA = vol.Schema(
                             {
                                 vol.Optional(CONF_NAME): cv.string,
                                 vol.Optional(CONF_TYPE): cv.string,
-                                vol.Optional(CONF_FUEL_TYPE): vol.In(["natural_gas", "propane", "lp", "oil", "electricity"]),
+                                vol.Optional(CONF_FUEL_TYPE): vol.In(
+                                    [
+                                        "natural_gas",
+                                        "propane",
+                                        "lp",
+                                        "oil",
+                                        "electricity",
+                                    ]
+                                ),
                                 vol.Optional(CONF_PROFILE): cv.string,
                                 vol.Optional(CONF_NOMINAL_BTU): vol.Coerce(float),
-                                vol.Optional(CONF_RATED_AFUE, default=0.95): vol.Coerce(float),
-                                vol.Optional(CONF_MIN_FIRE_BTU, default=20000.0): vol.Coerce(float),
+                                vol.Optional(CONF_RATED_AFUE, default=0.95): vol.Coerce(
+                                    float
+                                ),
+                                vol.Optional(
+                                    CONF_MIN_FIRE_BTU, default=20000.0
+                                ): vol.Coerce(float),
                             }
                         )
                     }
                 ),
                 vol.Required(CONF_SPACES): vol.All(cv.ensure_list, [SPACE_SCHEMA]),
+                vol.Optional(
+                    CONF_CYCLING_BAND,
+                    default=DEFAULT_CYCLING_BAND,
+                ): vol.Coerce(float),
                 vol.Optional(
                     CONF_EVALUATION_INTERVAL_MINUTES,
                     default=DEFAULT_EVALUATION_INTERVAL_MINUTES,
@@ -158,6 +182,7 @@ def _resolve_profile_path(profile_str: str) -> str:
 
     try:
         import hvac_crossover
+
         pkg_dir = os.path.dirname(hvac_crossover.__file__)
         pkg_profiles_dir = os.path.join(pkg_dir, "profiles", "producers")
         candidate = os.path.join(pkg_profiles_dir, profile_str)
@@ -176,7 +201,6 @@ def _resolve_profile_path(profile_str: str) -> str:
     return profile_str
 
 
-
 class HvacFusionManager:
     """Manages coordinator lifecycle, sensor polling, and thermostat actuation."""
 
@@ -190,6 +214,11 @@ class HvacFusionManager:
         self.emitter_offsets: Dict[str, float] = {}
         self.last_plan: Optional[Any] = None
         self.control_enabled: bool = conf.get(CONF_CONTROL_ENABLED, True)
+        self.cycling_band: float = float(
+            conf.get(CONF_CYCLING_BAND, DEFAULT_CYCLING_BAND)
+        )
+        self._cycling_state: Dict[str, bool] = {}
+        self._cycling_logged: set[str] = set()
 
         # Collect schedule entities from configured presets
         self.schedule_entities: set[str] = set()
@@ -205,7 +234,9 @@ class HvacFusionManager:
         """Asynchronously load topology profiles and build coordinator."""
         self.topology = await self.hass.async_add_executor_job(self._build_topology)
         gas_cost = float(self.conf[CONF_TARIFFS].get(CONF_GAS_COST_PER_THERM, 0.0))
-        propane_cost = float(self.conf[CONF_TARIFFS].get(CONF_PROPANE_COST_PER_GAL, 0.0))
+        propane_cost = float(
+            self.conf[CONF_TARIFFS].get(CONF_PROPANE_COST_PER_GAL, 0.0)
+        )
         elec_cost = float(self.conf[CONF_TARIFFS][CONF_ELECTRIC_COST_PER_KWH])
         self.tariffs = TariffSchedule(
             gas_cost_per_therm=gas_cost,
@@ -214,7 +245,6 @@ class HvacFusionManager:
         )
         self.coordinator = DualFuelCoordinator(self.topology, CoordinatorConfig())
 
-
     def _build_topology(self) -> SystemTopology:
         producers = []
         for p_id, p_conf in self.conf[CONF_PRODUCERS].items():
@@ -222,12 +252,19 @@ class HvacFusionManager:
             profile_name = p_conf.get(CONF_PROFILE)
             p_type = p_conf.get(CONF_TYPE, "inverter_heat_pump")
             fuel_str = p_conf.get(CONF_FUEL_TYPE, "natural_gas").lower()
-            fuel = FuelType.PROPANE if fuel_str in ("propane", "lp") else FuelType.NATURAL_GAS
+            fuel = (
+                FuelType.PROPANE
+                if fuel_str in ("propane", "lp")
+                else FuelType.NATURAL_GAS
+            )
 
             if profile_name:
                 resolved_path = _resolve_profile_path(profile_name)
                 prod = ProducerProfileFactory.load_from_json(
-                    file_path=resolved_path, producer_id=p_id, name=p_name, fuel_type=fuel
+                    file_path=resolved_path,
+                    producer_id=p_id,
+                    name=p_name,
+                    fuel_type=fuel,
                 )
                 producers.append(prod)
             elif p_type == "modulating_boiler":
@@ -241,7 +278,10 @@ class HvacFusionManager:
                 )
                 producers.append(prod)
             else:
-                _LOGGER.warning("Producer %s requires either a profile or modulating_boiler type", p_id)
+                _LOGGER.warning(
+                    "Producer %s requires either a profile or modulating_boiler type",
+                    p_id,
+                )
 
         role_map = {
             "master": SharedBoilerRole.MASTER,
@@ -301,13 +341,19 @@ class HvacFusionManager:
     def register_space_entity(self, space_id: str, entity: Any) -> None:
         self.space_entities[space_id] = entity
 
-    def get_space_current_temp(self, space_conf: Dict[str, Any]) -> float:
+    def get_space_current_temp(self, space_conf: Dict[str, Any]) -> Optional[float]:
         sensor_id = space_conf.get(CONF_TEMP_SENSOR)
         if sensor_id:
             state = self.hass.states.get(sensor_id)
             if state and state.state not in ("unavailable", "unknown"):
-                if "current_temperature" in state.attributes and state.attributes["current_temperature"] is not None:
-                    return float(state.attributes["current_temperature"])
+                if (
+                    "current_temperature" in state.attributes
+                    and state.attributes["current_temperature"] is not None
+                ):
+                    try:
+                        return float(state.attributes["current_temperature"])
+                    except (ValueError, TypeError):
+                        pass
                 try:
                     return float(state.state)
                 except ValueError:
@@ -318,10 +364,17 @@ class HvacFusionManager:
             e_entity = e_conf.get(CONF_ENTITY_ID)
             if e_entity:
                 state = self.hass.states.get(e_entity)
-                if state and "current_temperature" in state.attributes and state.attributes["current_temperature"] is not None:
-                    return float(state.attributes["current_temperature"])
+                if (
+                    state
+                    and "current_temperature" in state.attributes
+                    and state.attributes["current_temperature"] is not None
+                ):
+                    try:
+                        return float(state.attributes["current_temperature"])
+                    except (ValueError, TypeError):
+                        pass
 
-        return 68.0
+        return None
 
     def get_space_window_open(self, space_conf: Dict[str, Any]) -> bool:
         sensor_id = space_conf.get(CONF_WINDOW_SENSOR)
@@ -336,7 +389,10 @@ class HvacFusionManager:
         if out_sensor:
             state = self.hass.states.get(out_sensor)
             if state and state.state not in ("unavailable", "unknown"):
-                if "temperature" in state.attributes and state.attributes["temperature"] is not None:
+                if (
+                    "temperature" in state.attributes
+                    and state.attributes["temperature"] is not None
+                ):
                     return float(state.attributes["temperature"])
                 try:
                     return float(state.state)
@@ -376,7 +432,12 @@ class HvacFusionManager:
         plan = self.coordinator.evaluate(snapshot)
         self.last_plan = plan
 
-        _LOGGER.info("Evaluate, outdoor %s, conditions %s, plan %s", str(outdoor_temp), str(space_conditions), str(plan))
+        _LOGGER.info(
+            "Evaluate, outdoor %s, conditions %s, plan %s",
+            str(outdoor_temp),
+            str(space_conditions),
+            str(plan),
+        )
 
         # Dispatch commands to subsidiary thermostats
         await self._dispatch_subsidiary_commands(plan, not self.control_enabled)
@@ -389,6 +450,9 @@ class HvacFusionManager:
 
     async def _dispatch_subsidiary_commands(self, plan: Any, dry_run: bool) -> None:
         """Actuates physical climate entities according to plan directives."""
+        # Index spaces by s_id for quick lookup
+        spaces_by_id = {s[CONF_ID]: s for s in self.conf.get(CONF_SPACES, [])}
+
         # 1. Hydronic Boiler Zones
         # Determine active boiler zones
         active_boiler_zones = set()
@@ -404,50 +468,215 @@ class HvacFusionManager:
             state = self.hass.states.get(entity_id)
 
             if zone_id in active_boiler_zones:
-                # Find calling space target temp
+                # Find calling space target temp & space config
                 target_temp = DEFAULT_HEAT_TO
+                calling_s_conf = None
                 for s_id, s_dir in plan.space_directives.items():
-                    if e_id in s_dir.active_delivery_unit_ids and s_dir.target_temp is not None:
+                    if (
+                        e_id in s_dir.active_delivery_unit_ids
+                        and s_dir.target_temp is not None
+                    ):
                         target_temp = s_dir.target_temp
+                        calling_s_conf = spaces_by_id.get(s_id)
                         break
-                target_temp += self.emitter_offsets.get(e_id, 0.0)
+                ideal_temp = target_temp + self.emitter_offsets.get(e_id, 0.0)
 
-                curr_mode = state.state if state else None
-                curr_temp = state.attributes.get("temperature") if state else None
-
-                if curr_mode != "heat":
-                    _LOGGER.info("Set hydronic %s to hvac_mode heat", entity_id)
-                    if not dry_run:
-                        await self.hass.services.async_call(
-                            "climate",
-                            "set_hvac_mode",
-                            {"entity_id": entity_id, "hvac_mode": "heat"},
-                            blocking=True,
-                        )
-                clamped_temp = target_temp
+                # Check min/max clamping
+                mn = None
+                mx = None
                 if state:
-                    mn = state.attributes.get("min_temp")
-                    mx = state.attributes.get("max_temp")
-                    if mn is not None:
-                        clamped_temp = max(clamped_temp, float(mn))
-                    if mx is not None:
-                        clamped_temp = min(clamped_temp, float(mx))
-                    if clamped_temp != target_temp:
+                    raw_mn = state.attributes.get("min_temp")
+                    raw_mx = state.attributes.get("max_temp")
+                    if raw_mn is not None:
+                        mn = float(raw_mn)
+                    if raw_mx is not None:
+                        mx = float(raw_mx)
+
+                clamped_temp = ideal_temp
+                if mn is not None:
+                    clamped_temp = max(clamped_temp, mn)
+                if mx is not None:
+                    clamped_temp = min(clamped_temp, mx)
+
+                is_clamped = clamped_temp != ideal_temp
+
+                if is_clamped:
+                    if e_id not in self._cycling_logged:
                         _LOGGER.warning(
-                            "Hydronic %s: target_temp %.1f clamped to %.1f (min=%s, max=%s)",
-                            entity_id, target_temp, clamped_temp, mn, mx,
+                            "Hydronic %s: ideal_temp %.1f clamped to %.1f (min=%s, max=%s). Engaging setpoint cycling.",
+                            entity_id,
+                            ideal_temp,
+                            clamped_temp,
+                            mn,
+                            mx,
                         )
-                if curr_temp != clamped_temp:
-                    _LOGGER.info("Set hydronic %s to heat target %s", entity_id, clamped_temp)
-                    if not dry_run:
-                        await self.hass.services.async_call(
-                            "climate",
-                            "set_temperature",
-                            {"entity_id": entity_id, "temperature": clamped_temp, "hvac_mode": "heat"},
-                            blocking=True,
+                        self._cycling_logged.add(e_id)
+
+                    curr_space_temp = (
+                        self.get_space_current_temp(calling_s_conf)
+                        if calling_s_conf
+                        else None
+                    )
+                    if curr_space_temp is None:
+                        _LOGGER.warning(
+                            "Hydronic %s: space temp sensor unavailable; falling back to direct clamped setpoint %.1f",
+                            entity_id,
+                            clamped_temp,
                         )
+                        if e_id in self._cycling_state:
+                            del self._cycling_state[e_id]
+                        # Fallback normal actuation
+                        curr_mode = state.state if state else None
+                        curr_temp = (
+                            state.attributes.get("temperature") if state else None
+                        )
+                        if curr_mode != "heat":
+                            _LOGGER.info("Set hydronic %s to hvac_mode heat", entity_id)
+                            if not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_hvac_mode",
+                                    {"entity_id": entity_id, "hvac_mode": "heat"},
+                                    blocking=True,
+                                )
+                        if curr_temp != clamped_temp:
+                            _LOGGER.info(
+                                "Set hydronic %s to heat target %s",
+                                entity_id,
+                                clamped_temp,
+                            )
+                            if not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_temperature",
+                                    {
+                                        "entity_id": entity_id,
+                                        "temperature": clamped_temp,
+                                        "hvac_mode": "heat",
+                                    },
+                                    blocking=True,
+                                )
+                    else:
+                        # Cycling hysteresis for heating
+                        on_threshold = ideal_temp - self.cycling_band
+                        off_threshold = ideal_temp + self.cycling_band
+                        cycle_on_temp = (
+                            max(off_threshold, mn) if mn is not None else off_threshold
+                        )
+                        currently_on = self._cycling_state.get(e_id, False)
+
+                        if not currently_on and curr_space_temp < on_threshold:
+                            self._cycling_state[e_id] = True
+                            _LOGGER.info(
+                                "Cycling ON hydronic %s: space_temp %.1f < on_thresh %.1f (setpoint=%.1f)",
+                                entity_id,
+                                curr_space_temp,
+                                on_threshold,
+                                cycle_on_temp,
+                            )
+                            if not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_hvac_mode",
+                                    {"entity_id": entity_id, "hvac_mode": "heat"},
+                                    blocking=True,
+                                )
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_temperature",
+                                    {
+                                        "entity_id": entity_id,
+                                        "temperature": cycle_on_temp,
+                                        "hvac_mode": "heat",
+                                    },
+                                    blocking=True,
+                                )
+                        elif currently_on and curr_space_temp >= off_threshold:
+                            self._cycling_state[e_id] = False
+                            _LOGGER.info(
+                                "Cycling OFF hydronic %s: space_temp %.1f >= off_thresh %.1f",
+                                entity_id,
+                                curr_space_temp,
+                                off_threshold,
+                            )
+                            if not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_hvac_mode",
+                                    {"entity_id": entity_id, "hvac_mode": "off"},
+                                    blocking=True,
+                                )
+                        elif currently_on:
+                            # Hold ON state: ensure mode is heat and setpoint is cycle_on_temp
+                            curr_mode = state.state if state else None
+                            curr_temp = (
+                                state.attributes.get("temperature") if state else None
+                            )
+                            if curr_mode != "heat" and not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_hvac_mode",
+                                    {"entity_id": entity_id, "hvac_mode": "heat"},
+                                    blocking=True,
+                                )
+                            if curr_temp != cycle_on_temp and not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_temperature",
+                                    {
+                                        "entity_id": entity_id,
+                                        "temperature": cycle_on_temp,
+                                        "hvac_mode": "heat",
+                                    },
+                                    blocking=True,
+                                )
+                        else:
+                            # Hold OFF state
+                            if state and state.state != "off" and not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_hvac_mode",
+                                    {"entity_id": entity_id, "hvac_mode": "off"},
+                                    blocking=True,
+                                )
+                else:
+                    # Not clamped: clear cycling tracking and normal actuation
+                    if e_id in self._cycling_state:
+                        del self._cycling_state[e_id]
+                    self._cycling_logged.discard(e_id)
+
+                    curr_mode = state.state if state else None
+                    curr_temp = state.attributes.get("temperature") if state else None
+
+                    if curr_mode != "heat":
+                        _LOGGER.info("Set hydronic %s to hvac_mode heat", entity_id)
+                        if not dry_run:
+                            await self.hass.services.async_call(
+                                "climate",
+                                "set_hvac_mode",
+                                {"entity_id": entity_id, "hvac_mode": "heat"},
+                                blocking=True,
+                            )
+                    if curr_temp != clamped_temp:
+                        _LOGGER.info(
+                            "Set hydronic %s to heat target %s", entity_id, clamped_temp
+                        )
+                        if not dry_run:
+                            await self.hass.services.async_call(
+                                "climate",
+                                "set_temperature",
+                                {
+                                    "entity_id": entity_id,
+                                    "temperature": clamped_temp,
+                                    "hvac_mode": "heat",
+                                },
+                                blocking=True,
+                            )
             else:
-                # Hydronic zone inactive -> set hvac_mode: "off"
+                # Hydronic zone inactive -> clear cycling and set hvac_mode: "off"
+                if e_id in self._cycling_state:
+                    del self._cycling_state[e_id]
+                self._cycling_logged.discard(e_id)
                 if state and state.state != "off":
                     _LOGGER.info("Set hydronic %s to off", entity_id)
                     if not dry_run:
@@ -460,53 +689,334 @@ class HvacFusionManager:
 
         # 2. Mini-Split Indoor Heads
         for s_id, s_dir in plan.space_directives.items():
+            s_conf = spaces_by_id.get(s_id)
             for e_id, e_type in self.emitter_types.items():
                 if e_type != "mini_split" or not e_id.startswith(f"{s_id}_"):
                     continue
                 entity_id = self.emitter_entity_map[e_id]
                 state = self.hass.states.get(entity_id)
 
-                if e_id in s_dir.active_delivery_unit_ids and s_dir.hvac_mode != HvacMode.OFF:
+                if (
+                    e_id in s_dir.active_delivery_unit_ids
+                    and s_dir.hvac_mode != HvacMode.OFF
+                ):
                     desired_mode = s_dir.hvac_mode.value
-                    base_temp = s_dir.target_temp or (DEFAULT_HEAT_TO if desired_mode == "heat" else DEFAULT_COOL_TO)
-                    desired_temp = base_temp + self.emitter_offsets.get(e_id, 0.0)
+                    base_temp = s_dir.target_temp or (
+                        DEFAULT_HEAT_TO if desired_mode == "heat" else DEFAULT_COOL_TO
+                    )
+                    ideal_temp = base_temp + self.emitter_offsets.get(e_id, 0.0)
 
-                    curr_mode = state.state if state else None
-                    curr_temp = state.attributes.get("temperature") if state else None
-
-                    if curr_mode != desired_mode:
-                        _LOGGER.info("Set mini-split %s mode to %s", entity_id, desired_mode)
-                        if not dry_run:
-                            await self.hass.services.async_call(
-                                "climate",
-                                "set_hvac_mode",
-                                {"entity_id": entity_id, "hvac_mode": desired_mode},
-                                blocking=True,
-                            )
-                    clamped_temp = desired_temp
+                    mn = None
+                    mx = None
                     if state:
-                        mn = state.attributes.get("min_temp")
-                        mx = state.attributes.get("max_temp")
-                        if mn is not None:
-                            clamped_temp = max(clamped_temp, float(mn))
-                        if mx is not None:
-                            clamped_temp = min(clamped_temp, float(mx))
-                        if clamped_temp != desired_temp:
+                        raw_mn = state.attributes.get("min_temp")
+                        raw_mx = state.attributes.get("max_temp")
+                        if raw_mn is not None:
+                            mn = float(raw_mn)
+                        if raw_mx is not None:
+                            mx = float(raw_mx)
+
+                    clamped_temp = ideal_temp
+                    if mn is not None:
+                        clamped_temp = max(clamped_temp, mn)
+                    if mx is not None:
+                        clamped_temp = min(clamped_temp, mx)
+
+                    is_clamped = clamped_temp != ideal_temp
+
+                    if is_clamped:
+                        if e_id not in self._cycling_logged:
                             _LOGGER.warning(
-                                "Mini-split %s: desired_temp %.1f clamped to %.1f (min=%s, max=%s)",
-                                entity_id, desired_temp, clamped_temp, mn, mx,
+                                "Mini-split %s: ideal_temp %.1f clamped to %.1f (min=%s, max=%s). Engaging setpoint cycling.",
+                                entity_id,
+                                ideal_temp,
+                                clamped_temp,
+                                mn,
+                                mx,
                             )
-                    if curr_temp != clamped_temp:
-                        _LOGGER.info("Set mini-split %s target temp to %s", entity_id, clamped_temp)
-                        if not dry_run:
-                            await self.hass.services.async_call(
-                                "climate",
-                                "set_temperature",
-                                {"entity_id": entity_id, "temperature": clamped_temp},
-                                blocking=True,
+                            self._cycling_logged.add(e_id)
+
+                        curr_space_temp = (
+                            self.get_space_current_temp(s_conf) if s_conf else None
+                        )
+                        if curr_space_temp is None:
+                            _LOGGER.warning(
+                                "Mini-split %s: space temp sensor unavailable; falling back to direct clamped setpoint %.1f",
+                                entity_id,
+                                clamped_temp,
                             )
+                            if e_id in self._cycling_state:
+                                del self._cycling_state[e_id]
+                            # Normal fallback actuation
+                            curr_mode = state.state if state else None
+                            curr_temp = (
+                                state.attributes.get("temperature") if state else None
+                            )
+                            if curr_mode != desired_mode:
+                                _LOGGER.info(
+                                    "Set mini-split %s mode to %s",
+                                    entity_id,
+                                    desired_mode,
+                                )
+                                if not dry_run:
+                                    await self.hass.services.async_call(
+                                        "climate",
+                                        "set_hvac_mode",
+                                        {
+                                            "entity_id": entity_id,
+                                            "hvac_mode": desired_mode,
+                                        },
+                                        blocking=True,
+                                    )
+                            if curr_temp != clamped_temp:
+                                _LOGGER.info(
+                                    "Set mini-split %s target temp to %s",
+                                    entity_id,
+                                    clamped_temp,
+                                )
+                                if not dry_run:
+                                    await self.hass.services.async_call(
+                                        "climate",
+                                        "set_temperature",
+                                        {
+                                            "entity_id": entity_id,
+                                            "temperature": clamped_temp,
+                                        },
+                                        blocking=True,
+                                    )
+                        else:
+                            currently_on = self._cycling_state.get(e_id, False)
+
+                            if desired_mode == "heat":
+                                on_threshold = ideal_temp - self.cycling_band
+                                off_threshold = ideal_temp + self.cycling_band
+                                cycle_on_temp = (
+                                    max(off_threshold, mn)
+                                    if mn is not None
+                                    else off_threshold
+                                )
+
+                                if not currently_on and curr_space_temp < on_threshold:
+                                    self._cycling_state[e_id] = True
+                                    _LOGGER.info(
+                                        "Cycling ON mini-split %s: space_temp %.1f < on_thresh %.1f (heat setpoint=%.1f)",
+                                        entity_id,
+                                        curr_space_temp,
+                                        on_threshold,
+                                        cycle_on_temp,
+                                    )
+                                    if not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_hvac_mode",
+                                            {
+                                                "entity_id": entity_id,
+                                                "hvac_mode": "heat",
+                                            },
+                                            blocking=True,
+                                        )
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_temperature",
+                                            {
+                                                "entity_id": entity_id,
+                                                "temperature": cycle_on_temp,
+                                            },
+                                            blocking=True,
+                                        )
+                                elif currently_on and curr_space_temp >= off_threshold:
+                                    self._cycling_state[e_id] = False
+                                    _LOGGER.info(
+                                        "Cycling OFF mini-split %s: space_temp %.1f >= off_thresh %.1f",
+                                        entity_id,
+                                        curr_space_temp,
+                                        off_threshold,
+                                    )
+                                    if not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_hvac_mode",
+                                            {
+                                                "entity_id": entity_id,
+                                                "hvac_mode": "off",
+                                            },
+                                            blocking=True,
+                                        )
+                                elif currently_on:
+                                    curr_mode = state.state if state else None
+                                    curr_temp = (
+                                        state.attributes.get("temperature")
+                                        if state
+                                        else None
+                                    )
+                                    if curr_mode != "heat" and not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_hvac_mode",
+                                            {
+                                                "entity_id": entity_id,
+                                                "hvac_mode": "heat",
+                                            },
+                                            blocking=True,
+                                        )
+                                    if curr_temp != cycle_on_temp and not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_temperature",
+                                            {
+                                                "entity_id": entity_id,
+                                                "temperature": cycle_on_temp,
+                                            },
+                                            blocking=True,
+                                        )
+                                else:
+                                    if state and state.state != "off" and not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_hvac_mode",
+                                            {
+                                                "entity_id": entity_id,
+                                                "hvac_mode": "off",
+                                            },
+                                            blocking=True,
+                                        )
+                            else:
+                                # desired_mode == "cool"
+                                on_threshold = ideal_temp + self.cycling_band
+                                off_threshold = ideal_temp - self.cycling_band
+                                cycle_on_temp = (
+                                    min(off_threshold, mx)
+                                    if mx is not None
+                                    else off_threshold
+                                )
+
+                                if not currently_on and curr_space_temp > on_threshold:
+                                    self._cycling_state[e_id] = True
+                                    _LOGGER.info(
+                                        "Cycling ON mini-split %s: space_temp %.1f > on_thresh %.1f (cool setpoint=%.1f)",
+                                        entity_id,
+                                        curr_space_temp,
+                                        on_threshold,
+                                        cycle_on_temp,
+                                    )
+                                    if not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_hvac_mode",
+                                            {
+                                                "entity_id": entity_id,
+                                                "hvac_mode": "cool",
+                                            },
+                                            blocking=True,
+                                        )
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_temperature",
+                                            {
+                                                "entity_id": entity_id,
+                                                "temperature": cycle_on_temp,
+                                            },
+                                            blocking=True,
+                                        )
+                                elif currently_on and curr_space_temp <= off_threshold:
+                                    self._cycling_state[e_id] = False
+                                    _LOGGER.info(
+                                        "Cycling OFF mini-split %s: space_temp %.1f <= off_thresh %.1f",
+                                        entity_id,
+                                        curr_space_temp,
+                                        off_threshold,
+                                    )
+                                    if not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_hvac_mode",
+                                            {
+                                                "entity_id": entity_id,
+                                                "hvac_mode": "off",
+                                            },
+                                            blocking=True,
+                                        )
+                                elif currently_on:
+                                    curr_mode = state.state if state else None
+                                    curr_temp = (
+                                        state.attributes.get("temperature")
+                                        if state
+                                        else None
+                                    )
+                                    if curr_mode != "cool" and not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_hvac_mode",
+                                            {
+                                                "entity_id": entity_id,
+                                                "hvac_mode": "cool",
+                                            },
+                                            blocking=True,
+                                        )
+                                    if curr_temp != cycle_on_temp and not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_temperature",
+                                            {
+                                                "entity_id": entity_id,
+                                                "temperature": cycle_on_temp,
+                                            },
+                                            blocking=True,
+                                        )
+                                else:
+                                    if state and state.state != "off" and not dry_run:
+                                        await self.hass.services.async_call(
+                                            "climate",
+                                            "set_hvac_mode",
+                                            {
+                                                "entity_id": entity_id,
+                                                "hvac_mode": "off",
+                                            },
+                                            blocking=True,
+                                        )
+                    else:
+                        # Not clamped: clear cycling tracking and normal actuation
+                        if e_id in self._cycling_state:
+                            del self._cycling_state[e_id]
+                        self._cycling_logged.discard(e_id)
+
+                        curr_mode = state.state if state else None
+                        curr_temp = (
+                            state.attributes.get("temperature") if state else None
+                        )
+
+                        if curr_mode != desired_mode:
+                            _LOGGER.info(
+                                "Set mini-split %s mode to %s", entity_id, desired_mode
+                            )
+                            if not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_hvac_mode",
+                                    {"entity_id": entity_id, "hvac_mode": desired_mode},
+                                    blocking=True,
+                                )
+                        if curr_temp != clamped_temp:
+                            _LOGGER.info(
+                                "Set mini-split %s target temp to %s",
+                                entity_id,
+                                clamped_temp,
+                            )
+                            if not dry_run:
+                                await self.hass.services.async_call(
+                                    "climate",
+                                    "set_temperature",
+                                    {
+                                        "entity_id": entity_id,
+                                        "temperature": clamped_temp,
+                                    },
+                                    blocking=True,
+                                )
                 else:
-                    # Mini-split head inactive -> set hvac_mode: "off"
+                    # Mini-split head inactive -> clear cycling and set hvac_mode: "off"
+                    if e_id in self._cycling_state:
+                        del self._cycling_state[e_id]
+                    self._cycling_logged.discard(e_id)
                     if state and state.state != "off":
                         _LOGGER.info("Set mini-split %s mode to off", entity_id)
                         if not dry_run:
@@ -546,6 +1056,7 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
     # Listen to schedule transitions
     if manager.schedule_entities:
         from homeassistant.helpers.event import async_track_state_change_event
+
         async_track_state_change_event(
             hass, list(manager.schedule_entities), manager.async_handle_schedule_change
         )
@@ -556,7 +1067,9 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
 
-    interval_minutes = conf.get(CONF_EVALUATION_INTERVAL_MINUTES, DEFAULT_EVALUATION_INTERVAL_MINUTES)
+    interval_minutes = conf.get(
+        CONF_EVALUATION_INTERVAL_MINUTES, DEFAULT_EVALUATION_INTERVAL_MINUTES
+    )
     async_track_time_interval(
         hass, manager.async_evaluate, timedelta(minutes=interval_minutes)
     )
@@ -581,18 +1094,21 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
                     target_str = f"{s_dir.target_temp:.1f} °F"
 
                 action_str = s_dir.action.value
-                active_unit = ", ".join([u_id for u_id in s_dir.active_delivery_unit_ids]) or "None"
+                active_unit = (
+                    ", ".join([u_id for u_id in s_dir.active_delivery_unit_ids])
+                    or "None"
+                )
                 active_unit = active_unit.replace(s_id, "")
 
                 space_plan = f"{s_id}: {action_str} to {target_str} via {active_unit}"
                 spaces.append(space_plan)
-            resp['dir'] = "; ".join(spaces)
+            resp["dir"] = "; ".join(spaces)
         if plan.diagnostics:
             phase = plan.diagnostics.system_phase.value
             crossover = round(plan.diagnostics.economic_crossover_temp, 2)
             xp = plan.diagnostics.explanations
             explanations = "; ".join(xp) if xp else ""
-            resp['diag'] = f"Phase: {phase} Xover: {crossover}: {explanations}"
+            resp["diag"] = f"Phase: {phase} Xover: {crossover}: {explanations}"
         return resp
 
     hass.services.async_register(
