@@ -408,6 +408,12 @@ class HvacFusionManager:
         for s_conf in self.conf[CONF_SPACES]:
             s_id = s_conf[CONF_ID]
             curr_temp = self.get_space_current_temp(s_conf)
+            if curr_temp is None:
+                _LOGGER.debug(
+                    "Space %s: temperature sensor unavailable, skipping this cycle",
+                    s_id,
+                )
+                continue
             window_open = self.get_space_window_open(s_conf)
 
             entity = self.space_entities.get(s_id)
