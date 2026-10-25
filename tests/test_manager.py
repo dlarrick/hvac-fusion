@@ -1,6 +1,8 @@
 """Foundational integration tests for HVAC Fusion."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from homeassistant.components.climate import HVACAction
 from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
@@ -23,6 +25,7 @@ from custom_components.hvac_fusion.const import (
     CONF_GAS_COST_PER_THERM,
     CONF_NOMINAL_BTU,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
+    CONF_PRESETS,
     CONF_PRODUCER,
     CONF_PRODUCERS,
     CONF_SPACES,
@@ -103,3 +106,61 @@ def test_space_climate_entity_action_mapping():
 
     assert entity.hvac_action == HVACAction.HEATING
     assert "living_room_hp_0" in entity.extra_state_attributes["cycling_emitters"]
+
+
+@pytest.mark.asyncio
+async def test_space_climate_state_restoration():
+    """Verify that HvacFusionSpaceClimate restores active preset and setpoints on restart."""
+    hass = MagicMock()
+    manager = MagicMock()
+    manager.hass = hass
+
+    space_conf = {
+        CONF_ID: "living_room",
+        CONF_NAME: "Living Room",
+        CONF_PRESETS: {
+            "home": "schedule.lr_home",
+            "away": "schedule.lr_away",
+        },
+        CONF_EMITTERS: [],
+    }
+
+    # Case 1: Restoring 'away' preset instead of defaulting to first preset ('home')
+    entity = HvacFusionSpaceClimate(manager, space_conf)
+    assert entity.preset_mode == "home"  # Initial before restore
+
+    mock_last_state = MagicMock()
+    mock_last_state.state = "heat_cool"
+    mock_last_state.attributes = {
+        "preset_mode": "away",
+        "target_temp_low": 62.0,
+        "target_temp_high": 78.0,
+    }
+    with patch.object(
+        entity, "async_get_last_state", return_value=mock_last_state
+    ), patch.object(entity, "async_update_from_schedule") as mock_update_sched:
+        await entity.async_added_to_hass()
+        assert entity.preset_mode == "away"
+        mock_update_sched.assert_called_once()
+
+    # Case 2: Restoring 'manual' mode preserves custom setpoints without schedule override
+    entity_manual = HvacFusionSpaceClimate(manager, space_conf)
+    mock_last_manual = MagicMock()
+    mock_last_manual.state = "heat"
+    mock_last_manual.attributes = {
+        "preset_mode": "manual",
+        "target_temp_low": 65.0,
+        "target_temp_high": 75.0,
+        "temperature": 65.0,
+    }
+    with patch.object(
+        entity_manual, "async_get_last_state", return_value=mock_last_manual
+    ), patch.object(
+        entity_manual, "async_update_from_schedule"
+    ) as mock_update_sched_manual:
+        await entity_manual.async_added_to_hass()
+        assert entity_manual.preset_mode == "manual"
+        assert entity_manual.hvac_mode == "heat"
+        assert entity_manual.target_temperature_low == 65.0
+        # Schedule update should NOT be called for manual preset
+        mock_update_sched_manual.assert_not_called()

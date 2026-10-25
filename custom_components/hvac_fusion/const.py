@@ -8,8 +8,13 @@ CONF_TARIFFS = "tariffs"
 CONF_GAS_COST_PER_THERM = "gas_cost_per_therm"
 CONF_PROPANE_COST_PER_GAL = "propane_cost_per_gal"
 CONF_ELECTRIC_COST_PER_KWH = "electric_cost_per_kwh"
+CONF_ELECTRIC_RATE_SENSOR = "electric_rate_sensor"
+CONF_GAS_RATE_SENSOR = "gas_rate_sensor"
+CONF_PROPANE_RATE_SENSOR = "propane_rate_sensor"
 CONF_CONTROL_ENABLED = "control_enabled"
 CONF_FUEL_TYPE = "fuel_type"
+CONF_HEAT_PUMP_SAFETY_BAND_F = "heat_pump_safety_band_f"
+DEFAULT_HEAT_PUMP_SAFETY_BAND_F = 5.0
 
 CONF_PRODUCERS = "producers"
 CONF_SPACES = "spaces"

@@ -49,11 +49,13 @@ from .const import (
     CONF_CONTROL_ENABLED,
     CONF_CYCLING_BAND,
     CONF_ELECTRIC_COST_PER_KWH,
+    CONF_ELECTRIC_RATE_SENSOR,
     CONF_EMITTERS,
     CONF_EVALUATION_INTERVAL_MINUTES,
     CONF_FLOOR_AREA,
     CONF_FUEL_TYPE,
     CONF_GAS_COST_PER_THERM,
+    CONF_GAS_RATE_SENSOR,
     CONF_MIN_FIRE_BTU,
     CONF_NOMINAL_BTU,
     CONF_OFFSET,
@@ -64,6 +66,7 @@ from .const import (
     CONF_PRODUCERS,
     CONF_PROFILE,
     CONF_PROPANE_COST_PER_GAL,
+    CONF_PROPANE_RATE_SENSOR,
     CONF_RATED_AFUE,
     CONF_SHARED_BOILER_ROLE,
     CONF_SOLAR_EXPORT_ENTITY,
@@ -226,15 +229,58 @@ class HvacFusionManager:
         self._cycling_state: dict[str, bool] = {}
         self._cycling_logged: set[str] = set()
 
-        # Collect schedule entities from configured presets
-        self.schedule_entities: set[str] = set()
-        for s_conf in conf.get(CONF_SPACES, []):
-            for sched_id in s_conf.get(CONF_PRESETS, {}).values():
-                self.schedule_entities.add(sched_id)
-
         self.topology: SystemTopology | None = None
         self.tariffs: TariffSchedule | None = None
         self.coordinator: DualFuelCoordinator | None = None
+
+        # Collect schedule entities from configured presets
+        self.schedule_entities: set[str] = set()
+        for s_conf in self.spaces_config:
+            for sched_id in s_conf.get(CONF_PRESETS, {}).values():
+                self.schedule_entities.add(sched_id)
+
+    @property
+    def spaces_config(self) -> list[dict[str, Any]]:
+        """Return spaces configuration normalized as a list."""
+        raw = self.conf.get(CONF_SPACES, [])
+        return list(raw.values()) if isinstance(raw, dict) else list(raw)
+
+    def _resolve_sensor_or_float(
+        self, sensor_entity: str | None, default_val: float
+    ) -> float:
+        """Resolve a rate from a sensor entity or fallback to float."""
+        if sensor_entity:
+            state = self.hass.states.get(sensor_entity)
+            if state and state.state not in ("unavailable", "unknown"):
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    pass
+        try:
+            return float(default_val)
+        except (ValueError, TypeError):
+            return 0.0
+
+    def get_current_tariffs(self) -> TariffSchedule:
+        """Resolve current tariff rates (static or dynamic sensors)."""
+        tariffs_conf = self.conf.get(CONF_TARIFFS, {})
+        elec_sensor = tariffs_conf.get(CONF_ELECTRIC_RATE_SENSOR)
+        elec_cost = self._resolve_sensor_or_float(
+            elec_sensor, tariffs_conf.get(CONF_ELECTRIC_COST_PER_KWH, 0.0)
+        )
+        gas_sensor = tariffs_conf.get(CONF_GAS_RATE_SENSOR)
+        gas_cost = self._resolve_sensor_or_float(
+            gas_sensor, tariffs_conf.get(CONF_GAS_COST_PER_THERM, 0.0)
+        )
+        propane_sensor = tariffs_conf.get(CONF_PROPANE_RATE_SENSOR)
+        propane_cost = self._resolve_sensor_or_float(
+            propane_sensor, tariffs_conf.get(CONF_PROPANE_COST_PER_GAL, 0.0)
+        )
+        return TariffSchedule(
+            gas_cost_per_therm=gas_cost,
+            propane_cost_per_gal=propane_cost,
+            elec_cost_per_kwh=elec_cost,
+        )
 
     def register_sensor_entity(self, entity: Any) -> None:
         """Register a diagnostic sensor entity."""
@@ -281,7 +327,10 @@ class HvacFusionManager:
     def break_even_cop(self) -> float | None:
         """Derives critical break-even COP where Cost_HP ($/MMBtu) == Cost_Boiler ($/MMBtu)."""
         boiler = self.primary_boiler
-        if not boiler or not self.tariffs or not self.coordinator:
+        if not boiler or not self.coordinator:
+            return None
+        self.tariffs = self.get_current_tariffs()
+        if not self.tariffs:
             return None
         from hvac_crossover import FuelType
 
@@ -302,7 +351,10 @@ class HvacFusionManager:
         """Outdoor temperature where heat pump and boiler costs are equal."""
         boiler = self.primary_boiler
         hp = self.primary_heat_pump
-        if not boiler or not hp or not self.tariffs or not self.coordinator:
+        if not boiler or not hp or not self.coordinator:
+            return None
+        self.tariffs = self.get_current_tariffs()
+        if not self.tariffs:
             return None
         from hvac_crossover import FuelType
 
@@ -325,15 +377,7 @@ class HvacFusionManager:
     async def async_init(self) -> None:
         """Asynchronously load topology profiles and build coordinator."""
         self.topology = await self.hass.async_add_executor_job(self._build_topology)
-        tariffs_conf = self.conf.get(CONF_TARIFFS, {})
-        gas_cost = float(tariffs_conf.get(CONF_GAS_COST_PER_THERM, 0.0))
-        propane_cost = float(tariffs_conf.get(CONF_PROPANE_COST_PER_GAL, 0.0))
-        elec_cost = float(tariffs_conf.get(CONF_ELECTRIC_COST_PER_KWH, 0.0))
-        self.tariffs = TariffSchedule(
-            gas_cost_per_therm=gas_cost,
-            propane_cost_per_gal=propane_cost,
-            elec_cost_per_kwh=elec_cost,
-        )
+        self.tariffs = self.get_current_tariffs()
         self.coordinator = DualFuelCoordinator(self.topology, CoordinatorConfig())
 
     def _build_topology(self) -> SystemTopology:
@@ -381,7 +425,7 @@ class HvacFusionManager:
         }
 
         spaces = []
-        for s_conf in self.conf.get(CONF_SPACES, []):
+        for s_conf in self.spaces_config:
             s_id = s_conf[CONF_ID]
             emitters = []
             for idx, e_conf in enumerate(s_conf[CONF_EMITTERS]):
@@ -494,9 +538,10 @@ class HvacFusionManager:
     async def async_evaluate(self, now: Any | None = None) -> None:
         """Runs the coordination cycle and dispatches commands to physical thermostats."""
         outdoor_temp = self.get_outdoor_temp()
+        self.tariffs = self.get_current_tariffs()
 
         space_conditions: dict[str, SpaceCondition] = {}
-        for s_conf in self.conf.get(CONF_SPACES, []):
+        for s_conf in self.spaces_config:
             s_id = s_conf[CONF_ID]
             curr_temp = self.get_space_current_temp(s_conf)
             if curr_temp is None:
@@ -552,7 +597,7 @@ class HvacFusionManager:
     async def _dispatch_subsidiary_commands(self, plan: Any, dry_run: bool) -> None:
         """Actuates physical climate entities according to plan directives."""
         # Index spaces by s_id for quick lookup
-        spaces_by_id = {s[CONF_ID]: s for s in self.conf.get(CONF_SPACES, [])}
+        spaces_by_id = {s[CONF_ID]: s for s in self.spaces_config}
 
         # 1. Hydronic Boiler Zones
         # Determine active boiler zones
@@ -1252,7 +1297,9 @@ async def async_unload_entry(
     """Unload a config entry."""
     manager = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     unload_platforms = [Platform.SENSOR]
-    if manager and manager.topology and manager.topology.spaces:
+    if Platform.CLIMATE in getattr(entry, "loaded_platforms", set()):
+        unload_platforms.append(Platform.CLIMATE)
+    elif manager and manager.topology and manager.topology.spaces:
         unload_platforms.append(Platform.CLIMATE)
 
     unload_ok = await hass.config_entries.async_unload_platforms(
