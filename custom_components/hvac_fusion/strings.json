@@ -32,7 +32,7 @@
         "title": "HVAC Fusion Options",
         "description": "Select a configuration section to manage.",
         "menu_options": {
-          "global_settings": "Global Sensors, Tariffs & Safety Bands",
+          "global_settings": "Global Sensors, Tariffs, & Safety Bands",
           "producers_menu": "Manage Producers (Heat Pumps & Boilers)",
           "spaces_menu": "Manage Spaces (Rooms & Zones)",
           "policies_menu": "Operational Policies",
