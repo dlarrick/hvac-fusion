@@ -37,6 +37,8 @@ from custom_components.hvac_fusion.const import (
 def test_manager_build_topology():
     """Verify HvacFusionManager builds topology and tariffs from config."""
     hass = MagicMock(spec=HomeAssistant)
+    hass.states = MagicMock()
+    hass.services = MagicMock()
     conf = {
         CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
         CONF_TARIFFS: {
@@ -76,7 +78,9 @@ def test_manager_build_topology():
 
 def test_space_climate_entity_action_mapping():
     """Verify that HvacFusionSpaceClimate maps underlying emitter actions and shows cycling attrs."""
-    hass = MagicMock()
+    hass = MagicMock(spec=HomeAssistant)
+    hass.states = MagicMock()
+    hass.services = MagicMock()
     manager = MagicMock()
     manager.hass = hass
     manager.emitter_entity_map = {"living_room_hp_0": "climate.lr_mini"}
@@ -111,7 +115,9 @@ def test_space_climate_entity_action_mapping():
 @pytest.mark.asyncio
 async def test_space_climate_state_restoration():
     """Verify that HvacFusionSpaceClimate restores active preset and setpoints on restart."""
-    hass = MagicMock()
+    hass = MagicMock(spec=HomeAssistant)
+    hass.states = MagicMock()
+    hass.services = MagicMock()
     manager = MagicMock()
     manager.hass = hass
 
@@ -168,7 +174,9 @@ async def test_space_climate_state_restoration():
 
 def test_tariffs_sensor_with_static_fallback():
     """Verify that dynamic rate entity takes precedence, falling back to static rate if unavailable."""
-    hass = MagicMock()
+    hass = MagicMock(spec=HomeAssistant)
+    hass.states = MagicMock()
+    hass.services = MagicMock()
     conf = {
         CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
         CONF_TARIFFS: {
