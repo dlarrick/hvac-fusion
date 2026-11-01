@@ -255,7 +255,19 @@ class HvacFusionManager:
                 try:
                     return float(state.state)
                 except (ValueError, TypeError):
-                    pass
+                    _LOGGER.warning(
+                        "Tariff entity %s state %r cannot be parsed as a float; falling back to static rate %.4f",
+                        sensor_entity,
+                        state.state,
+                        default_val,
+                    )
+            else:
+                _LOGGER.debug(
+                    "Tariff entity %s is %s; falling back to static rate %.4f",
+                    sensor_entity,
+                    state.state if state else "not found",
+                    default_val,
+                )
         try:
             return float(default_val)
         except (ValueError, TypeError):

@@ -366,7 +366,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                                     )
                                 },
                             ): selector.EntitySelector(
-                                selector.EntitySelectorConfig(domain="sensor")
+                                selector.EntitySelectorConfig(
+                                    domain=["sensor", "input_number", "number"]
+                                )
                             ),
                         }
                     )
@@ -391,7 +393,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                                     "suggested_value": tariffs.get(CONF_GAS_RATE_SENSOR)
                                 },
                             ): selector.EntitySelector(
-                                selector.EntitySelectorConfig(domain="sensor")
+                                selector.EntitySelectorConfig(
+                                    domain=["sensor", "input_number", "number"]
+                                )
                             ),
                         }
                     )
@@ -418,7 +422,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                                     )
                                 },
                             ): selector.EntitySelector(
-                                selector.EntitySelectorConfig(domain="sensor")
+                                selector.EntitySelectorConfig(
+                                    domain=["sensor", "input_number", "number"]
+                                )
                             ),
                         }
                     )

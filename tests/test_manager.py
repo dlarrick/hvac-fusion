@@ -164,3 +164,58 @@ async def test_space_climate_state_restoration():
         assert entity_manual.target_temperature_low == 65.0
         # Schedule update should NOT be called for manual preset
         mock_update_sched_manual.assert_not_called()
+
+
+def test_tariffs_sensor_with_static_fallback():
+    """Verify that dynamic rate entity takes precedence, falling back to static rate if unavailable."""
+    hass = MagicMock(spec=HomeAssistant)
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {
+            CONF_ELECTRIC_COST_PER_KWH: 0.25,
+            "electric_rate_sensor": "sensor.electric_rate",
+            CONF_GAS_COST_PER_THERM: 1.50,
+            "gas_rate_sensor": "input_number.gas_rate",
+        },
+        CONF_PRODUCERS: {},
+        CONF_SPACES: [],
+    }
+    manager = HvacFusionManager(hass, conf)
+
+    # 1. When sensors are available and numeric
+    def mock_states_online(entity_id):
+        s = MagicMock()
+        if entity_id == "sensor.electric_rate":
+            s.state = "0.38"
+            return s
+        if entity_id == "input_number.gas_rate":
+            s.state = "1.95"
+            return s
+        return None
+
+    hass.states.get = mock_states_online
+    tariffs = manager.get_current_tariffs()
+    assert tariffs.elec_cost_per_kwh == 0.38
+    assert tariffs.gas_cost_per_therm == 1.95
+
+    # 2. When electric sensor is unavailable and input_number is unknown -> fall back to static
+    def mock_states_offline(entity_id):
+        s = MagicMock()
+        if entity_id == "sensor.electric_rate":
+            s.state = "unavailable"
+            return s
+        if entity_id == "input_number.gas_rate":
+            s.state = "unknown"
+            return s
+        return None
+
+    hass.states.get = mock_states_offline
+    tariffs_fallback = manager.get_current_tariffs()
+    assert tariffs_fallback.elec_cost_per_kwh == 0.25
+    assert tariffs_fallback.gas_cost_per_therm == 1.50
+
+    # 3. When sensor returns None (not found) -> fall back to static
+    hass.states.get = lambda _: None
+    tariffs_missing = manager.get_current_tariffs()
+    assert tariffs_missing.elec_cost_per_kwh == 0.25
+    assert tariffs_missing.gas_cost_per_therm == 1.50

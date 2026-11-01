@@ -19,6 +19,7 @@ from custom_components.hvac_fusion.const import (
     CONF_FLOOR_AREA,
     CONF_FUEL_TYPE,
     CONF_GAS_COST_PER_THERM,
+    CONF_GAS_RATE_SENSOR,
     CONF_HEAT_PUMP_SAFETY_BAND_F,
     CONF_NOMINAL_BTU,
     CONF_OFFSET,
@@ -151,6 +152,7 @@ async def test_options_flow_global_settings(hass: HomeAssistant) -> None:
             },
             "gas_section": {
                 CONF_GAS_COST_PER_THERM: 2.10,
+                CONF_GAS_RATE_SENSOR: "input_number.current_gas_rate",
             },
             "propane_section": {
                 CONF_PROPANE_COST_PER_GAL: 3.80,
@@ -177,6 +179,7 @@ async def test_options_flow_global_settings(hass: HomeAssistant) -> None:
     assert saved[CONF_TARIFFS][CONF_ELECTRIC_COST_PER_KWH] == 0.32
     assert saved[CONF_TARIFFS][CONF_ELECTRIC_RATE_SENSOR] == "sensor.live_electric_rate"
     assert saved[CONF_TARIFFS][CONF_GAS_COST_PER_THERM] == 2.10
+    assert saved[CONF_TARIFFS][CONF_GAS_RATE_SENSOR] == "input_number.current_gas_rate"
     assert saved[CONF_TARIFFS][CONF_PROPANE_COST_PER_GAL] == 3.80
 
 
