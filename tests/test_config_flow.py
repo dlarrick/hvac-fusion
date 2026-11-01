@@ -23,6 +23,7 @@ from custom_components.hvac_fusion.const import (
     CONF_NOMINAL_BTU,
     CONF_OFFSET,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
+    CONF_PRESETS,
     CONF_PRIORITY,
     CONF_PRODUCER,
     CONF_PRODUCERS,
@@ -140,13 +141,23 @@ async def test_options_flow_global_settings(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.weather_outdoor_temp",
-            CONF_SOLAR_EXPORT_ENTITY: "sensor.solar_export_power",
-            CONF_ELECTRIC_COST_PER_KWH: 0.32,
-            CONF_ELECTRIC_RATE_SENSOR: "sensor.live_electric_rate",
-            CONF_GAS_COST_PER_THERM: 2.10,
-            CONF_PROPANE_COST_PER_GAL: 3.80,
-            CONF_HEAT_PUMP_SAFETY_BAND_F: 6.0,
+            "environment_section": {
+                CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.weather_outdoor_temp",
+                CONF_SOLAR_EXPORT_ENTITY: "sensor.solar_export_power",
+            },
+            "electricity_section": {
+                CONF_ELECTRIC_COST_PER_KWH: 0.32,
+                CONF_ELECTRIC_RATE_SENSOR: "sensor.live_electric_rate",
+            },
+            "gas_section": {
+                CONF_GAS_COST_PER_THERM: 2.10,
+            },
+            "propane_section": {
+                CONF_PROPANE_COST_PER_GAL: 3.80,
+            },
+            "limits_section": {
+                CONF_HEAT_PUMP_SAFETY_BAND_F: 6.0,
+            },
         },
     )
     # Submission returns to main menu
@@ -157,6 +168,7 @@ async def test_options_flow_global_settings(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "finish"}
     )
+    await hass.async_block_till_done()
     assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
     saved = result["data"]
     assert saved[CONF_OUTDOOR_TEMPERATURE_ENTITY] == "sensor.weather_outdoor_temp"
@@ -204,6 +216,7 @@ async def test_options_flow_policies_menu(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "finish"}
     )
+    await hass.async_block_till_done()
     assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_CONTROL_ENABLED] is True
     assert result["data"][CONF_CYCLING_BAND] == 3.0
@@ -295,6 +308,7 @@ async def test_options_flow_producers_crud(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "finish"}
     )
+    await hass.async_block_till_done()
     assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
     assert "hp_test" not in result["data"][CONF_PRODUCERS]
 
@@ -392,6 +406,7 @@ async def test_options_flow_spaces_and_emitters(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "finish"}
     )
+    await hass.async_block_till_done()
     assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
 
     spaces = result["data"][CONF_SPACES]
@@ -401,3 +416,126 @@ async def test_options_flow_spaces_and_emitters(hass: HomeAssistant) -> None:
     assert len(spaces[0][CONF_EMITTERS]) == 1
     assert spaces[0][CONF_EMITTERS][0][CONF_ENTITY_ID] == "climate.lr_ac"
     assert spaces[0][CONF_EMITTERS][0][CONF_OFFSET] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_options_flow_space_schedule_presets(hass: HomeAssistant) -> None:
+    """Test adding, editing, and deleting schedule presets on a space."""
+    hass.states.async_set(
+        "schedule.lr_day",
+        "on",
+        {"friendly_name": "Daytime Schedule"},
+    )
+    hass.states.async_set(
+        "schedule.lr_night",
+        "off",
+        {},
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="HVAC Fusion",
+        data={
+            CONF_NAME: "HVAC Fusion",
+            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+            CONF_TARIFFS: {},
+            CONF_PRODUCERS: {},
+            CONF_SPACES: [
+                {
+                    CONF_ID: "living_room",
+                    CONF_NAME: "Living Room",
+                    CONF_TEMP_SENSOR: "sensor.living_room_temp",
+                    CONF_PRESETS: {},
+                    CONF_EMITTERS: [],
+                }
+            ],
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "spaces_menu"}
+    )
+    assert result["step_id"] == "spaces_menu"
+
+    # Select living_room space
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"space_action": "living_room"}
+    )
+    assert result["step_id"] == "space_manage"
+
+    # Select manage presets
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"action": "presets"}
+    )
+    assert result["step_id"] == "presets_menu"
+
+    # Add a preset without custom name (should derive from friendly_name)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"preset_action": "add"}
+    )
+    assert result["step_id"] == "preset_add"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"schedule_entity": "schedule.lr_day"},
+    )
+    assert result["step_id"] == "presets_menu"
+
+    # Add a second preset with custom name
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"preset_action": "add"}
+    )
+    assert result["step_id"] == "preset_add"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"schedule_entity": "schedule.lr_night", "preset_name": "Night Mode"},
+    )
+    assert result["step_id"] == "presets_menu"
+
+    # Manage Daytime Schedule and delete it
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"preset_action": "Daytime Schedule"}
+    )
+    assert result["step_id"] == "preset_manage"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"action": "delete"}
+    )
+    assert result["step_id"] == "preset_delete"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"confirm": True}
+    )
+    assert result["step_id"] == "presets_menu"
+
+    # Exit back to spaces_menu -> init -> finish
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"preset_action": "back"}
+    )
+    assert result["step_id"] == "space_manage"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"action": "back"}
+    )
+    assert result["step_id"] == "spaces_menu"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"space_action": "back"}
+    )
+    assert result["step_id"] == "init"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "finish"}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+
+    spaces = result["data"][CONF_SPACES]
+    assert len(spaces) == 1
+    assert CONF_PRESETS in spaces[0]
+    assert "Night Mode" in spaces[0][CONF_PRESETS]
+    assert spaces[0][CONF_PRESETS]["Night Mode"] == "schedule.lr_night"
+    assert "Daytime Schedule" not in spaces[0][CONF_PRESETS]

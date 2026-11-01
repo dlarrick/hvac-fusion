@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -9,7 +10,8 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector
 
 from .const import (
@@ -28,6 +30,7 @@ from .const import (
     CONF_NOMINAL_BTU,
     CONF_OFFSET,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
+    CONF_PRESETS,
     CONF_PRIORITY,
     CONF_PRODUCER,
     CONF_PRODUCERS,
@@ -51,30 +54,12 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def get_available_producer_profiles() -> list[dict[str, str]]:
-    """Return available producer profile choices."""
-    profiles = [
-        {
-            "value": "mitsubishi/mxz_3c30nahz2.json",
-            "label": "Mitsubishi MXZ-3C30NAHZ2 (30k Hyper-Heat)",
-        },
-        {
-            "value": "mitsubishi/mxz_2d20nlhz.json",
-            "label": "Mitsubishi MXZ-2D20NLHZ (20k Hyper-Heat)",
-        },
-        {
-            "value": "haier/3u24ms2vhb.json",
-            "label": "Haier 3U24MS2VHB (24k 3-Port)",
-        },
-        {
-            "value": "bradford_white/bwmfthw140p.json",
-            "label": "Bradford White BWMFTHW140P (Brute FT Propane)",
-        },
-        {
-            "value": "burnham/alta_150.json",
-            "label": "Burnham Alta 150 (Natural Gas)",
-        },
-    ]
+_PROFILES_CACHE: list[dict[str, str]] | None = None
+
+
+def _scan_profiles_sync() -> list[dict[str, str]]:
+    """Scan and read profiles metadata from hvac_crossover."""
+    profiles: list[dict[str, str]] = []
     try:
         import hvac_crossover
 
@@ -82,17 +67,67 @@ def get_available_producer_profiles() -> list[dict[str, str]]:
         pkg_profiles_dir = os.path.join(pkg_dir, "profiles", "producers")
         if os.path.isdir(pkg_profiles_dir):
             for root, _, files in os.walk(pkg_profiles_dir):
-                for f in files:
-                    if f.endswith(".json"):
-                        rel_path = os.path.relpath(
-                            os.path.join(root, f), pkg_profiles_dir
-                        )
-                        if not any(p["value"] == rel_path for p in profiles):
+                for f in sorted(files):
+                    if f.endswith(".json") and not f.endswith(".orig"):
+                        full_path = os.path.join(root, f)
+                        rel_path = os.path.relpath(full_path, pkg_profiles_dir)
+                        try:
+                            with open(full_path, encoding="utf-8") as fp:
+                                data = json.load(fp)
+                            make = data.get("make")
+                            model = data.get("model")
+                            series = data.get("series")
+                            btu = data.get("nominal_heating_btu") or data.get(
+                                "nominal_cooling_btu"
+                            )
+                            fuel = data.get("fuel_type")
+
+                            parts = []
+                            if make:
+                                parts.append(make)
+                            if model:
+                                parts.append(model)
+                            elif series:
+                                parts.append(series)
+
+                            label = " ".join(parts) if parts else rel_path
+                            extra_info = []
+                            if fuel:
+                                extra_info.append(fuel.replace("_", " ").title())
+                            if btu:
+                                extra_info.append(
+                                    f"{int(btu) // 1000}k BTU"
+                                    if int(btu) >= 1000
+                                    else f"{btu} BTU"
+                                )
+                            if extra_info:
+                                label += f" ({', '.join(extra_info)})"
+
+                            profiles.append({"value": rel_path, "label": label})
+                        except Exception:
                             profiles.append({"value": rel_path, "label": rel_path})
     except Exception:
         pass
     profiles.append({"value": "none", "label": "None / Custom Modulating Boiler"})
     return profiles
+
+
+async def async_get_available_producer_profiles(
+    hass: HomeAssistant,
+) -> list[dict[str, str]]:
+    """Asynchronously return available producer profile choices without blocking."""
+    global _PROFILES_CACHE
+    if _PROFILES_CACHE is None:
+        _PROFILES_CACHE = await hass.async_add_executor_job(_scan_profiles_sync)
+    return _PROFILES_CACHE
+
+
+def get_available_producer_profiles() -> list[dict[str, str]]:
+    """Return available producer profile choices."""
+    global _PROFILES_CACHE
+    if _PROFILES_CACHE is None:
+        _PROFILES_CACHE = _scan_profiles_sync()
+    return _PROFILES_CACHE
 
 
 class HvacFusionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -193,6 +228,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         self._selected_producer_id: str | None = None
         self._selected_space_id: str | None = None
         self._selected_emitter_idx: int | None = None
+        self._selected_preset_name: str | None = None
 
     @property
     def _options(self) -> dict[str, Any]:
@@ -233,37 +269,49 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     ) -> config_entries.ConfigFlowResult:
         """Configure global sensors and tariffs."""
         if user_input is not None:
-            self._options[CONF_OUTDOOR_TEMPERATURE_ENTITY] = user_input[
+            env_sec = user_input.get("environment_section") or user_input
+            elec_sec = user_input.get("electricity_section") or user_input
+            gas_sec = user_input.get("gas_section") or user_input
+            propane_sec = user_input.get("propane_section") or user_input
+            limits_sec = user_input.get("limits_section") or user_input
+
+            self._options[CONF_OUTDOOR_TEMPERATURE_ENTITY] = env_sec[
                 CONF_OUTDOOR_TEMPERATURE_ENTITY
             ]
-            if CONF_SOLAR_EXPORT_ENTITY in user_input:
-                self._options[CONF_SOLAR_EXPORT_ENTITY] = user_input[
+            if (
+                CONF_SOLAR_EXPORT_ENTITY in env_sec
+                and env_sec[CONF_SOLAR_EXPORT_ENTITY]
+            ):
+                self._options[CONF_SOLAR_EXPORT_ENTITY] = env_sec[
                     CONF_SOLAR_EXPORT_ENTITY
                 ]
+            else:
+                self._options.pop(CONF_SOLAR_EXPORT_ENTITY, None)
+
             self._options[CONF_HEAT_PUMP_SAFETY_BAND_F] = float(
-                user_input.get(
+                limits_sec.get(
                     CONF_HEAT_PUMP_SAFETY_BAND_F, DEFAULT_HEAT_PUMP_SAFETY_BAND_F
                 )
             )
 
             tariffs = self._options.setdefault(CONF_TARIFFS, {})
             tariffs[CONF_ELECTRIC_COST_PER_KWH] = float(
-                user_input[CONF_ELECTRIC_COST_PER_KWH]
+                elec_sec[CONF_ELECTRIC_COST_PER_KWH]
             )
             tariffs[CONF_GAS_COST_PER_THERM] = float(
-                user_input.get(CONF_GAS_COST_PER_THERM, 0.0)
+                gas_sec.get(CONF_GAS_COST_PER_THERM, 0.0)
             )
             tariffs[CONF_PROPANE_COST_PER_GAL] = float(
-                user_input.get(CONF_PROPANE_COST_PER_GAL, 0.0)
+                propane_sec.get(CONF_PROPANE_COST_PER_GAL, 0.0)
             )
 
-            for key in (
-                CONF_ELECTRIC_RATE_SENSOR,
-                CONF_GAS_RATE_SENSOR,
-                CONF_PROPANE_RATE_SENSOR,
+            for key, sec in (
+                (CONF_ELECTRIC_RATE_SENSOR, elec_sec),
+                (CONF_GAS_RATE_SENSOR, gas_sec),
+                (CONF_PROPANE_RATE_SENSOR, propane_sec),
             ):
-                if user_input.get(key):
-                    tariffs[key] = user_input[key]
+                if sec.get(key):
+                    tariffs[key] = sec[key]
                 else:
                     tariffs.pop(key, None)
 
@@ -272,87 +320,127 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         tariffs = self._options.get(CONF_TARIFFS, {})
         schema = vol.Schema(
             {
-                vol.Required(
-                    CONF_OUTDOOR_TEMPERATURE_ENTITY,
-                    default=self._options.get(CONF_OUTDOOR_TEMPERATURE_ENTITY, ""),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="sensor")
-                ),
-                vol.Optional(
-                    CONF_SOLAR_EXPORT_ENTITY,
-                    description={
-                        "suggested_value": self._options.get(CONF_SOLAR_EXPORT_ENTITY)
-                    },
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="sensor")
-                ),
-                vol.Required(
-                    CONF_ELECTRIC_COST_PER_KWH,
-                    default=tariffs.get(CONF_ELECTRIC_COST_PER_KWH, 0.25),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=2.0,
-                        step=0.01,
-                        mode=selector.NumberSelectorMode.BOX,
+                vol.Required("environment_section"): section(
+                    vol.Schema(
+                        {
+                            vol.Required(
+                                CONF_OUTDOOR_TEMPERATURE_ENTITY,
+                                default=self._options.get(
+                                    CONF_OUTDOOR_TEMPERATURE_ENTITY, ""
+                                ),
+                            ): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="sensor")
+                            ),
+                            vol.Optional(
+                                CONF_SOLAR_EXPORT_ENTITY,
+                                description={
+                                    "suggested_value": self._options.get(
+                                        CONF_SOLAR_EXPORT_ENTITY
+                                    )
+                                },
+                            ): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="sensor")
+                            ),
+                        }
                     )
                 ),
-                vol.Optional(
-                    CONF_ELECTRIC_RATE_SENSOR,
-                    description={
-                        "suggested_value": tariffs.get(CONF_ELECTRIC_RATE_SENSOR)
-                    },
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="sensor")
-                ),
-                vol.Optional(
-                    CONF_GAS_COST_PER_THERM,
-                    default=tariffs.get(CONF_GAS_COST_PER_THERM, 0.0),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=10.0,
-                        step=0.01,
-                        mode=selector.NumberSelectorMode.BOX,
+                vol.Required("electricity_section"): section(
+                    vol.Schema(
+                        {
+                            vol.Required(
+                                CONF_ELECTRIC_COST_PER_KWH,
+                                default=tariffs.get(CONF_ELECTRIC_COST_PER_KWH, 0.25),
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=0.0,
+                                    max=2.0,
+                                    step=0.01,
+                                    mode=selector.NumberSelectorMode.BOX,
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_ELECTRIC_RATE_SENSOR,
+                                description={
+                                    "suggested_value": tariffs.get(
+                                        CONF_ELECTRIC_RATE_SENSOR
+                                    )
+                                },
+                            ): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="sensor")
+                            ),
+                        }
                     )
                 ),
-                vol.Optional(
-                    CONF_GAS_RATE_SENSOR,
-                    description={"suggested_value": tariffs.get(CONF_GAS_RATE_SENSOR)},
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="sensor")
-                ),
-                vol.Optional(
-                    CONF_PROPANE_COST_PER_GAL,
-                    default=tariffs.get(CONF_PROPANE_COST_PER_GAL, 0.0),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=15.0,
-                        step=0.01,
-                        mode=selector.NumberSelectorMode.BOX,
+                vol.Required("gas_section"): section(
+                    vol.Schema(
+                        {
+                            vol.Optional(
+                                CONF_GAS_COST_PER_THERM,
+                                default=tariffs.get(CONF_GAS_COST_PER_THERM, 0.0),
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=0.0,
+                                    max=10.0,
+                                    step=0.01,
+                                    mode=selector.NumberSelectorMode.BOX,
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_GAS_RATE_SENSOR,
+                                description={
+                                    "suggested_value": tariffs.get(CONF_GAS_RATE_SENSOR)
+                                },
+                            ): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="sensor")
+                            ),
+                        }
                     )
                 ),
-                vol.Optional(
-                    CONF_PROPANE_RATE_SENSOR,
-                    description={
-                        "suggested_value": tariffs.get(CONF_PROPANE_RATE_SENSOR)
-                    },
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="sensor")
+                vol.Required("propane_section"): section(
+                    vol.Schema(
+                        {
+                            vol.Optional(
+                                CONF_PROPANE_COST_PER_GAL,
+                                default=tariffs.get(CONF_PROPANE_COST_PER_GAL, 0.0),
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=0.0,
+                                    max=15.0,
+                                    step=0.01,
+                                    mode=selector.NumberSelectorMode.BOX,
+                                )
+                            ),
+                            vol.Optional(
+                                CONF_PROPANE_RATE_SENSOR,
+                                description={
+                                    "suggested_value": tariffs.get(
+                                        CONF_PROPANE_RATE_SENSOR
+                                    )
+                                },
+                            ): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="sensor")
+                            ),
+                        }
+                    )
                 ),
-                vol.Optional(
-                    CONF_HEAT_PUMP_SAFETY_BAND_F,
-                    default=self._options.get(
-                        CONF_HEAT_PUMP_SAFETY_BAND_F,
-                        DEFAULT_HEAT_PUMP_SAFETY_BAND_F,
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=20.0,
-                        step=0.5,
-                        mode=selector.NumberSelectorMode.BOX,
+                vol.Required("limits_section"): section(
+                    vol.Schema(
+                        {
+                            vol.Optional(
+                                CONF_HEAT_PUMP_SAFETY_BAND_F,
+                                default=self._options.get(
+                                    CONF_HEAT_PUMP_SAFETY_BAND_F,
+                                    DEFAULT_HEAT_PUMP_SAFETY_BAND_F,
+                                ),
+                            ): selector.NumberSelector(
+                                selector.NumberSelectorConfig(
+                                    min=0.0,
+                                    max=20.0,
+                                    step=0.5,
+                                    mode=selector.NumberSelectorMode.BOX,
+                                )
+                            ),
+                        }
                     )
                 ),
             }
@@ -503,7 +591,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 }
                 return await self.async_step_producers_menu()
 
-        profile_choices = get_available_producer_profiles()
+        profile_choices = await async_get_available_producer_profiles(self.hass)
         schema = vol.Schema(
             {
                 vol.Required(CONF_ID): str,
@@ -567,7 +655,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             p_conf[CONF_FUEL_TYPE] = user_input.get(CONF_FUEL_TYPE, "natural_gas")
             return await self.async_step_producers_menu()
 
-        profile_choices = get_available_producer_profiles()
+        profile_choices = await async_get_available_producer_profiles(self.hass)
         current_profile = p_conf.get(CONF_PROFILE) or "none"
 
         schema = vol.Schema(
@@ -681,6 +769,8 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             act = user_input["action"]
             if act == "edit":
                 return await self.async_step_space_edit()
+            if act == "presets":
+                return await self.async_step_presets_menu()
             if act == "emitters":
                 return await self.async_step_emitters_menu()
             if act == "delete":
@@ -700,6 +790,10 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     selector.SelectSelectorConfig(
                         options=[
                             {"value": "edit", "label": f"Edit {s_name} Settings"},
+                            {
+                                "value": "presets",
+                                "label": f"Manage Schedule Presets ({len(space.get(CONF_PRESETS, {}))})",
+                            },
                             {
                                 "value": "emitters",
                                 "label": f"Manage Emitters ({len(space.get(CONF_EMITTERS, []))})",
@@ -741,6 +835,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     CONF_SHARED_BOILER_ROLE: user_input.get(
                         CONF_SHARED_BOILER_ROLE, "independent"
                     ),
+                    CONF_PRESETS: {},
                     CONF_EMITTERS: [],
                 }
                 if user_input.get(CONF_WINDOW_SENSOR):
@@ -916,6 +1011,218 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             step_id="space_delete",
             data_schema=schema,
             description_placeholders={"space_name": s_name},
+        )
+
+    async def async_step_presets_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Show schedule presets list for selected space."""
+        s_id = self._selected_space_id or ""
+        space = next(
+            (s for s in self._options.get(CONF_SPACES, []) if s.get(CONF_ID) == s_id),
+            None,
+        )
+        if not space:
+            return await self.async_step_spaces_menu()
+
+        if user_input is not None:
+            choice = user_input["preset_action"]
+            if choice == "add":
+                return await self.async_step_preset_add()
+            if choice == "back":
+                return await self.async_step_space_manage()
+            self._selected_preset_name = choice
+            return await self.async_step_preset_manage()
+
+        presets = space.setdefault(CONF_PRESETS, {})
+        options = [{"value": "add", "label": "+ Add a schedule preset"}]
+        for p_name, sched_entity in presets.items():
+            options.append(
+                {
+                    "value": p_name,
+                    "label": f"{p_name} ({sched_entity})",
+                }
+            )
+        options.append(
+            {"value": "back", "label": f"Back to {space.get(CONF_NAME, s_id)}"}
+        )
+
+        schema = vol.Schema(
+            {
+                vol.Required("preset_action", default="add"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=options,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                )
+            }
+        )
+        return self.async_show_form(
+            step_id="presets_menu",
+            data_schema=schema,
+            description_placeholders={"space_name": space.get(CONF_NAME, s_id)},
+        )
+
+    async def async_step_preset_manage(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Choose action for selected preset."""
+        if user_input is not None:
+            act = user_input["action"]
+            if act == "edit":
+                return await self.async_step_preset_edit()
+            if act == "delete":
+                return await self.async_step_preset_delete()
+            return await self.async_step_presets_menu()
+
+        p_name = self._selected_preset_name or ""
+        schema = vol.Schema(
+            {
+                vol.Required("action", default="edit"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            {"value": "edit", "label": f"Edit {p_name}"},
+                            {"value": "delete", "label": f"Delete {p_name}"},
+                            {"value": "back", "label": "Back to Presets List"},
+                        ],
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                )
+            }
+        )
+        return self.async_show_form(
+            step_id="preset_manage",
+            data_schema=schema,
+            description_placeholders={"preset_name": p_name},
+        )
+
+    def _derive_preset_name_from_schedule(
+        self, sched_entity: str, custom_name: str | None
+    ) -> str:
+        """Derive preset name from custom name or schedule entity attributes."""
+        if custom_name and custom_name.strip():
+            return custom_name.strip()
+        state = self.hass.states.get(sched_entity)
+        if state and state.attributes.get("friendly_name"):
+            return str(state.attributes["friendly_name"]).strip()
+        if state and state.name:
+            return str(state.name).strip()
+        slug = sched_entity.split(".", 1)[-1]
+        return slug.replace("_", " ").title()
+
+    async def async_step_preset_add(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Add a schedule preset to the space."""
+        errors: dict[str, str] = {}
+        s_id = self._selected_space_id or ""
+        space = next(
+            (s for s in self._options.get(CONF_SPACES, []) if s.get(CONF_ID) == s_id),
+            None,
+        )
+        if not space:
+            return await self.async_step_spaces_menu()
+
+        if user_input is not None:
+            sched_entity = user_input["schedule_entity"]
+            custom_name = user_input.get("preset_name")
+            p_name = self._derive_preset_name_from_schedule(sched_entity, custom_name)
+
+            presets = space.setdefault(CONF_PRESETS, {})
+            if p_name in presets:
+                errors["base"] = "preset_exists"
+            else:
+                presets[p_name] = sched_entity
+                return await self.async_step_presets_menu()
+
+        schema = vol.Schema(
+            {
+                vol.Required("schedule_entity"): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="schedule")
+                ),
+                vol.Optional("preset_name"): selector.TextSelector(),
+            }
+        )
+        return self.async_show_form(
+            step_id="preset_add",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"space_name": space.get(CONF_NAME, s_id)},
+        )
+
+    async def async_step_preset_edit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Edit an existing schedule preset."""
+        errors: dict[str, str] = {}
+        s_id = self._selected_space_id or ""
+        space = next(
+            (s for s in self._options.get(CONF_SPACES, []) if s.get(CONF_ID) == s_id),
+            None,
+        )
+        if not space:
+            return await self.async_step_spaces_menu()
+
+        presets = space.setdefault(CONF_PRESETS, {})
+        old_name = self._selected_preset_name or ""
+        old_entity = presets.get(old_name, "")
+
+        if user_input is not None:
+            sched_entity = user_input["schedule_entity"]
+            custom_name = user_input.get("preset_name")
+            new_name = self._derive_preset_name_from_schedule(sched_entity, custom_name)
+
+            if new_name != old_name and new_name in presets:
+                errors["base"] = "preset_exists"
+            else:
+                presets.pop(old_name, None)
+                presets[new_name] = sched_entity
+                self._selected_preset_name = new_name
+                return await self.async_step_presets_menu()
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    "schedule_entity", default=old_entity
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="schedule")
+                ),
+                vol.Optional(
+                    "preset_name",
+                    description={"suggested_value": old_name},
+                ): selector.TextSelector(),
+            }
+        )
+        return self.async_show_form(
+            step_id="preset_edit",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"preset_name": old_name},
+        )
+
+    async def async_step_preset_delete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Delete a schedule preset."""
+        s_id = self._selected_space_id or ""
+        space = next(
+            (s for s in self._options.get(CONF_SPACES, []) if s.get(CONF_ID) == s_id),
+            None,
+        )
+        p_name = self._selected_preset_name or ""
+
+        if user_input is not None:
+            if user_input.get("confirm", False) and space:
+                space.get(CONF_PRESETS, {}).pop(p_name, None)
+            return await self.async_step_presets_menu()
+
+        schema = vol.Schema(
+            {vol.Required("confirm", default=True): selector.BooleanSelector()}
+        )
+        return self.async_show_form(
+            step_id="preset_delete",
+            data_schema=schema,
+            description_placeholders={"preset_name": p_name},
         )
 
     async def async_step_emitters_menu(

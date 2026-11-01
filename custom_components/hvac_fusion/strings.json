@@ -42,6 +42,28 @@
       "global_settings": {
         "title": "Global Sensors, Tariffs & Safety Bands",
         "description": "Configure outdoor weather sensor, electric and fuel rates or live rate sensors, and heat pump safety bands.",
+        "sections": {
+          "environment_section": {
+            "name": "Environmental Sensors",
+            "description": "Sensors for outdoor weather and solar generation."
+          },
+          "electricity_section": {
+            "name": "Electricity Tariff",
+            "description": "Current electric rate ($/kWh) or dynamic rate sensor entity."
+          },
+          "gas_section": {
+            "name": "Natural Gas Tariff",
+            "description": "Current gas rate ($/therm) or dynamic rate sensor entity."
+          },
+          "propane_section": {
+            "name": "Propane Tariff",
+            "description": "Contracted or replacement rate ($/gal) or dynamic rate sensor entity."
+          },
+          "limits_section": {
+            "name": "Operating Limits",
+            "description": "Low ambient safety thresholds for heat pump operation."
+          }
+        },
         "data": {
           "outdoor_temperature_entity": "Outdoor Temperature Sensor",
           "solar_export_entity": "Solar Export Sensor (Optional)",
@@ -153,6 +175,43 @@
           "confirm": "Confirm Deletion"
         }
       },
+      "presets_menu": {
+        "title": "Manage Schedule Presets: {space_name}",
+        "description": "Add, edit, or delete schedule-backed presets for this space.",
+        "data": {
+          "preset_action": "Action or Preset to Manage"
+        }
+      },
+      "preset_manage": {
+        "title": "Manage Preset: {preset_name}",
+        "description": "Choose an action for this preset.",
+        "data": {
+          "action": "Action"
+        }
+      },
+      "preset_add": {
+        "title": "Add Schedule Preset to {space_name}",
+        "description": "Select a schedule entity. The preset name will automatically match the schedule, or you can provide a custom name.",
+        "data": {
+          "schedule_entity": "Schedule Entity",
+          "preset_name": "Custom Preset Name (Optional)"
+        }
+      },
+      "preset_edit": {
+        "title": "Edit Preset: {preset_name}",
+        "description": "Update the schedule entity or preset name.",
+        "data": {
+          "schedule_entity": "Schedule Entity",
+          "preset_name": "Custom Preset Name"
+        }
+      },
+      "preset_delete": {
+        "title": "Delete Preset: {preset_name}",
+        "description": "Are you sure you want to remove this schedule preset?",
+        "data": {
+          "confirm": "Confirm Deletion"
+        }
+      },
       "emitters_menu": {
         "title": "Manage Emitters: {space_name}",
         "description": "Add, edit, or delete emitters attached to this space.",
@@ -202,6 +261,7 @@
     "error": {
       "producer_id_exists": "A producer with this ID already exists",
       "space_id_exists": "A space with this ID already exists",
+      "preset_exists": "A preset with this name already exists for this space",
       "no_producers": "Please add at least one producer first before configuring emitters"
     }
   },

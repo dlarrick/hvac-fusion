@@ -87,6 +87,7 @@ async def async_setup_entry(
 class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
     """Virtual climate entity representing a managed living space."""
 
+    _attr_should_poll = False
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
@@ -250,6 +251,8 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             "active_delivery_units": self._active_delivery_units,
             "cycling_emitters": cycling_emitters,
             "active_producer": self._active_producer,
+            "control_enabled": self._manager.control_enabled,
+            "dry_run": not self._manager.control_enabled,
             "economic_crossover_temp": self._economic_crossover,
             "system_phase": self._system_phase,
             "window_open": self._manager.get_space_window_open(self._space_conf),

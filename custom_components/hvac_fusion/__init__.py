@@ -1288,6 +1288,37 @@ async def async_setup_entry(
     if manager.topology and manager.topology.spaces:
         await hass.config_entries.async_forward_entry_setups(entry, [Platform.CLIMATE])
 
+    # Listen to schedule transitions
+    if manager.schedule_entities:
+        from homeassistant.helpers.event import async_track_state_change_event
+
+        entry.async_on_unload(
+            async_track_state_change_event(
+                hass,
+                list(manager.schedule_entities),
+                manager.async_handle_schedule_change,
+            )
+        )
+
+    interval_minutes = conf.get(
+        CONF_EVALUATION_INTERVAL_MINUTES, DEFAULT_EVALUATION_INTERVAL_MINUTES
+    )
+    entry.async_on_unload(
+        async_track_time_interval(
+            hass, manager.async_evaluate, timedelta(minutes=interval_minutes)
+        )
+    )
+
+    async def _on_started(_event: Any) -> None:
+        await manager.async_evaluate()
+
+    if hass.is_running:
+        hass.async_create_task(manager.async_evaluate())
+    else:
+        entry.async_on_unload(
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+        )
+
     return True
 
 
