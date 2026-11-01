@@ -168,7 +168,7 @@ async def test_space_climate_state_restoration():
 
 def test_tariffs_sensor_with_static_fallback():
     """Verify that dynamic rate entity takes precedence, falling back to static rate if unavailable."""
-    hass = MagicMock(spec=HomeAssistant)
+    hass = MagicMock()
     conf = {
         CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
         CONF_TARIFFS: {
