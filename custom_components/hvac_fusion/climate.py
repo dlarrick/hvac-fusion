@@ -88,12 +88,8 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
     """Virtual climate entity representing a managed living space."""
 
     _attr_should_poll = False
-    _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
-    _attr_supported_features = (
-        ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-        | ClimateEntityFeature.TARGET_TEMPERATURE
-        | ClimateEntityFeature.PRESET_MODE
-    )
+    _attr_native_temperature_unit = UnitOfTemperature.FAHRENHEIT
+    _attr_target_temperature_step = 1.0
 
     def __init__(self, manager: Any, space_conf: dict[str, Any]) -> None:
         self._manager = manager
@@ -106,9 +102,12 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             HVACMode.COOL,
             HVACMode.OFF,
         ]
-        self._attr_name = space_conf[CONF_NAME]
+        raw_name = space_conf[CONF_NAME]
+        self._attr_name = (
+            raw_name if raw_name.lower().endswith("space") else f"{raw_name} Space"
+        )
         self._attr_unique_id = space_conf.get(
-            CONF_UNIQUE_ID, f"hvac_fusion_{self._space_id}"
+            CONF_UNIQUE_ID, f"hvac_fusion_{self._space_id}_space"
         )
 
         self._attr_hvac_mode = HVACMode.HEAT_COOL
@@ -190,23 +189,36 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         return self._presets.get(self._attr_preset_mode)
 
     @property
-    def target_temperature_low(self) -> float | None:
-        return self._target_temp_low
+    def supported_features(self) -> ClimateEntityFeature:
+        features = ClimateEntityFeature.PRESET_MODE
+        if self._attr_hvac_mode in (HVACMode.HEAT_COOL, HVACMode.OFF):
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+        elif self._attr_hvac_mode in (HVACMode.HEAT, HVACMode.COOL):
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE
+        return features
 
     @property
-    def target_temperature_high(self) -> float | None:
-        return self._target_temp_high
+    def native_target_temperature_low(self) -> float | None:
+        if self._attr_hvac_mode in (HVACMode.HEAT_COOL, HVACMode.OFF):
+            return self._target_temp_low
+        return None
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature_high(self) -> float | None:
+        if self._attr_hvac_mode in (HVACMode.HEAT_COOL, HVACMode.OFF):
+            return self._target_temp_high
+        return None
+
+    @property
+    def native_target_temperature(self) -> float | None:
         if self._attr_hvac_mode == HVACMode.HEAT:
             return self._target_temp_low
         if self._attr_hvac_mode == HVACMode.COOL:
             return self._target_temp_high
-        return self._target_temp
+        return None
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         return self._manager.get_space_current_temp(self._space_conf)
 
     @property

@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import section
+from homeassistant.data_entry_flow import Optional, section
 from homeassistant.helpers import selector
 
 from .const import (
@@ -54,12 +56,12 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-_PROFILES_CACHE: list[dict[str, str]] | None = None
+_PROFILES_CACHE: list[dict[str, Any]] | None = None
 
 
-def _scan_profiles_sync() -> list[dict[str, str]]:
+def _scan_profiles_sync() -> list[dict[str, Any]]:
     """Scan and read profiles metadata from hvac_crossover."""
-    profiles: list[dict[str, str]] = []
+    profiles: list[dict[str, Any]] = []
     try:
         import hvac_crossover
 
@@ -74,6 +76,10 @@ def _scan_profiles_sync() -> list[dict[str, str]]:
                         try:
                             with open(full_path, encoding="utf-8") as fp:
                                 data = json.load(fp)
+                            raw_type = data.get("producer_type", "")
+                            category = (
+                                "heat_pump" if "heat_pump" in raw_type else "boiler"
+                            )
                             make = data.get("make")
                             model = data.get("model")
                             series = data.get("series")
@@ -103,31 +109,72 @@ def _scan_profiles_sync() -> list[dict[str, str]]:
                             if extra_info:
                                 label += f" ({', '.join(extra_info)})"
 
-                            profiles.append({"value": rel_path, "label": label})
-                        except Exception:
-                            profiles.append({"value": rel_path, "label": rel_path})
-    except Exception:
-        pass
-    profiles.append({"value": "none", "label": "None / Custom Modulating Boiler"})
+                            profiles.append(
+                                {
+                                    "value": rel_path,
+                                    "label": label,
+                                    "category": category,
+                                }
+                            )
+                        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+                            cat = "heat_pump" if "heat_pump" in rel_path else "boiler"
+                            profiles.append(
+                                {
+                                    "value": rel_path,
+                                    "label": rel_path,
+                                    "category": cat,
+                                }
+                            )
+    except OSError as err:
+        _LOGGER.debug("Could not scan profiles: %s", err)
     return profiles
+
+
+def _filter_profiles(
+    raw_profiles: list[dict[str, Any]], category: str | None = None
+) -> list[dict[str, str]]:
+    """Filter scanned profiles by category and append tailored custom/none option."""
+    if category == "heat_pump":
+        res = [
+            {"value": p["value"], "label": p["label"]}
+            for p in raw_profiles
+            if p.get("category") == "heat_pump"
+        ]
+        res.append({"value": "none", "label": "None / Custom Heat Pump"})
+        return res
+    if category == "boiler":
+        res = [
+            {"value": p["value"], "label": p["label"]}
+            for p in raw_profiles
+            if p.get("category") == "boiler"
+        ]
+        res.append({"value": "none", "label": "None / Custom Boiler"})
+        return res
+
+    res = [{"value": p["value"], "label": p["label"]} for p in raw_profiles]
+    res.append({"value": "none", "label": "None / Custom Equipment"})
+    return res
 
 
 async def async_get_available_producer_profiles(
     hass: HomeAssistant,
+    category: str | None = None,
 ) -> list[dict[str, str]]:
     """Asynchronously return available producer profile choices without blocking."""
     global _PROFILES_CACHE
     if _PROFILES_CACHE is None:
         _PROFILES_CACHE = await hass.async_add_executor_job(_scan_profiles_sync)
-    return _PROFILES_CACHE
+    return _filter_profiles(_PROFILES_CACHE, category)
 
 
-def get_available_producer_profiles() -> list[dict[str, str]]:
+def get_available_producer_profiles(
+    category: str | None = None,
+) -> list[dict[str, str]]:
     """Return available producer profile choices."""
     global _PROFILES_CACHE
     if _PROFILES_CACHE is None:
         _PROFILES_CACHE = _scan_profiles_sync()
-    return _PROFILES_CACHE
+    return _filter_profiles(_PROFILES_CACHE, category)
 
 
 class HvacFusionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -146,7 +193,10 @@ class HvacFusionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Handle the initial hub configuration step."""
+        """Handle the initial coordinator configuration step."""
+        if self._async_current_entries():
+            return self.async_abort(reason="already_configured")
+
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -159,18 +209,14 @@ class HvacFusionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_OUTDOOR_TEMPERATURE_ENTITY
                 ],
                 CONF_CONTROL_ENABLED: user_input.get(CONF_CONTROL_ENABLED, False),
-                CONF_TARIFFS: {
-                    CONF_ELECTRIC_COST_PER_KWH: user_input[CONF_ELECTRIC_COST_PER_KWH],
-                    CONF_GAS_COST_PER_THERM: user_input.get(
-                        CONF_GAS_COST_PER_THERM, 0.0
-                    ),
-                    CONF_PROPANE_COST_PER_GAL: user_input.get(
-                        CONF_PROPANE_COST_PER_GAL, 0.0
-                    ),
-                },
+                CONF_TARIFFS: {},
                 CONF_PRODUCERS: {},
                 CONF_SPACES: [],
             }
+            if user_input.get(CONF_SOLAR_EXPORT_ENTITY):
+                entry_data[CONF_SOLAR_EXPORT_ENTITY] = user_input[
+                    CONF_SOLAR_EXPORT_ENTITY
+                ]
 
             return self.async_create_entry(title=title, data=entry_data)
 
@@ -180,35 +226,8 @@ class HvacFusionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_OUTDOOR_TEMPERATURE_ENTITY): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="sensor")
                 ),
-                vol.Required(
-                    CONF_ELECTRIC_COST_PER_KWH, default=0.25
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=2.0,
-                        step=0.01,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_GAS_COST_PER_THERM, default=0.0
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=10.0,
-                        step=0.01,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_PROPANE_COST_PER_GAL, default=0.0
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0,
-                        max=15.0,
-                        step=0.01,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
+                vol.Optional(CONF_SOLAR_EXPORT_ENTITY): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor")
                 ),
                 vol.Optional(
                     CONF_CONTROL_ENABLED, default=False
@@ -234,9 +253,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     def _options(self) -> dict[str, Any]:
         """Return or lazily initialize working options copy."""
         if self._working_options is None:
-            opts = dict(self.config_entry.options)
+            opts = copy.deepcopy(dict(self.config_entry.options))
             if not opts:
-                opts = dict(self.config_entry.data)
+                opts = copy.deepcopy(dict(self.config_entry.data))
             opts.setdefault(CONF_TARIFFS, {})
             opts.setdefault(CONF_PRODUCERS, {})
             opts.setdefault(CONF_SPACES, [])
@@ -267,187 +286,37 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_global_settings(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Configure global sensors and tariffs."""
+        """Configure environmental sensors."""
         if user_input is not None:
             env_sec = user_input.get("environment_section") or user_input
-            elec_sec = user_input.get("electricity_section") or user_input
-            gas_sec = user_input.get("gas_section") or user_input
-            propane_sec = user_input.get("propane_section") or user_input
-            limits_sec = user_input.get("limits_section") or user_input
 
             self._options[CONF_OUTDOOR_TEMPERATURE_ENTITY] = env_sec[
                 CONF_OUTDOOR_TEMPERATURE_ENTITY
             ]
-            if (
-                CONF_SOLAR_EXPORT_ENTITY in env_sec
-                and env_sec[CONF_SOLAR_EXPORT_ENTITY]
-            ):
+            if env_sec.get(CONF_SOLAR_EXPORT_ENTITY):
                 self._options[CONF_SOLAR_EXPORT_ENTITY] = env_sec[
                     CONF_SOLAR_EXPORT_ENTITY
                 ]
             else:
                 self._options.pop(CONF_SOLAR_EXPORT_ENTITY, None)
 
-            self._options[CONF_HEAT_PUMP_SAFETY_BAND_F] = float(
-                limits_sec.get(
-                    CONF_HEAT_PUMP_SAFETY_BAND_F, DEFAULT_HEAT_PUMP_SAFETY_BAND_F
-                )
-            )
-
-            tariffs = self._options.setdefault(CONF_TARIFFS, {})
-            tariffs[CONF_ELECTRIC_COST_PER_KWH] = float(
-                elec_sec[CONF_ELECTRIC_COST_PER_KWH]
-            )
-            tariffs[CONF_GAS_COST_PER_THERM] = float(
-                gas_sec.get(CONF_GAS_COST_PER_THERM, 0.0)
-            )
-            tariffs[CONF_PROPANE_COST_PER_GAL] = float(
-                propane_sec.get(CONF_PROPANE_COST_PER_GAL, 0.0)
-            )
-
-            for key, sec in (
-                (CONF_ELECTRIC_RATE_SENSOR, elec_sec),
-                (CONF_GAS_RATE_SENSOR, gas_sec),
-                (CONF_PROPANE_RATE_SENSOR, propane_sec),
-            ):
-                if sec.get(key):
-                    tariffs[key] = sec[key]
-                else:
-                    tariffs.pop(key, None)
-
             return await self.async_step_init()
 
-        tariffs = self._options.get(CONF_TARIFFS, {})
         schema = vol.Schema(
             {
-                vol.Required("environment_section"): section(
-                    vol.Schema(
-                        {
-                            vol.Required(
-                                CONF_OUTDOOR_TEMPERATURE_ENTITY,
-                                default=self._options.get(
-                                    CONF_OUTDOOR_TEMPERATURE_ENTITY, ""
-                                ),
-                            ): selector.EntitySelector(
-                                selector.EntitySelectorConfig(domain="sensor")
-                            ),
-                            vol.Optional(
-                                CONF_SOLAR_EXPORT_ENTITY,
-                                description={
-                                    "suggested_value": self._options.get(
-                                        CONF_SOLAR_EXPORT_ENTITY
-                                    )
-                                },
-                            ): selector.EntitySelector(
-                                selector.EntitySelectorConfig(domain="sensor")
-                            ),
-                        }
-                    )
+                vol.Required(
+                    CONF_OUTDOOR_TEMPERATURE_ENTITY,
+                    default=self._options.get(CONF_OUTDOOR_TEMPERATURE_ENTITY, ""),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor")
                 ),
-                vol.Required("electricity_section"): section(
-                    vol.Schema(
-                        {
-                            vol.Required(
-                                CONF_ELECTRIC_COST_PER_KWH,
-                                default=tariffs.get(CONF_ELECTRIC_COST_PER_KWH, 0.25),
-                            ): selector.NumberSelector(
-                                selector.NumberSelectorConfig(
-                                    min=0.0,
-                                    max=2.0,
-                                    step=0.01,
-                                    mode=selector.NumberSelectorMode.BOX,
-                                )
-                            ),
-                            vol.Optional(
-                                CONF_ELECTRIC_RATE_SENSOR,
-                                description={
-                                    "suggested_value": tariffs.get(
-                                        CONF_ELECTRIC_RATE_SENSOR
-                                    )
-                                },
-                            ): selector.EntitySelector(
-                                selector.EntitySelectorConfig(
-                                    domain=["sensor", "input_number", "number"]
-                                )
-                            ),
-                        }
-                    )
-                ),
-                vol.Required("gas_section"): section(
-                    vol.Schema(
-                        {
-                            vol.Optional(
-                                CONF_GAS_COST_PER_THERM,
-                                default=tariffs.get(CONF_GAS_COST_PER_THERM, 0.0),
-                            ): selector.NumberSelector(
-                                selector.NumberSelectorConfig(
-                                    min=0.0,
-                                    max=10.0,
-                                    step=0.01,
-                                    mode=selector.NumberSelectorMode.BOX,
-                                )
-                            ),
-                            vol.Optional(
-                                CONF_GAS_RATE_SENSOR,
-                                description={
-                                    "suggested_value": tariffs.get(CONF_GAS_RATE_SENSOR)
-                                },
-                            ): selector.EntitySelector(
-                                selector.EntitySelectorConfig(
-                                    domain=["sensor", "input_number", "number"]
-                                )
-                            ),
-                        }
-                    )
-                ),
-                vol.Required("propane_section"): section(
-                    vol.Schema(
-                        {
-                            vol.Optional(
-                                CONF_PROPANE_COST_PER_GAL,
-                                default=tariffs.get(CONF_PROPANE_COST_PER_GAL, 0.0),
-                            ): selector.NumberSelector(
-                                selector.NumberSelectorConfig(
-                                    min=0.0,
-                                    max=15.0,
-                                    step=0.01,
-                                    mode=selector.NumberSelectorMode.BOX,
-                                )
-                            ),
-                            vol.Optional(
-                                CONF_PROPANE_RATE_SENSOR,
-                                description={
-                                    "suggested_value": tariffs.get(
-                                        CONF_PROPANE_RATE_SENSOR
-                                    )
-                                },
-                            ): selector.EntitySelector(
-                                selector.EntitySelectorConfig(
-                                    domain=["sensor", "input_number", "number"]
-                                )
-                            ),
-                        }
-                    )
-                ),
-                vol.Required("limits_section"): section(
-                    vol.Schema(
-                        {
-                            vol.Optional(
-                                CONF_HEAT_PUMP_SAFETY_BAND_F,
-                                default=self._options.get(
-                                    CONF_HEAT_PUMP_SAFETY_BAND_F,
-                                    DEFAULT_HEAT_PUMP_SAFETY_BAND_F,
-                                ),
-                            ): selector.NumberSelector(
-                                selector.NumberSelectorConfig(
-                                    min=0.0,
-                                    max=20.0,
-                                    step=0.5,
-                                    mode=selector.NumberSelectorMode.BOX,
-                                )
-                            ),
-                        }
-                    )
+                vol.Optional(
+                    CONF_SOLAR_EXPORT_ENTITY,
+                    description={
+                        "suggested_value": self._options.get(CONF_SOLAR_EXPORT_ENTITY)
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor")
                 ),
             }
         )
@@ -456,56 +325,255 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_policies_menu(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Configure operational policies."""
+        """Configure tariffs, safety limits, and operational policies."""
         if user_input is not None:
-            self._options[CONF_CONTROL_ENABLED] = user_input.get(
-                CONF_CONTROL_ENABLED, False
-            )
-            self._options[CONF_CYCLING_BAND] = float(
-                user_input.get(CONF_CYCLING_BAND, DEFAULT_CYCLING_BAND)
-            )
-            self._options[CONF_EVALUATION_INTERVAL_MINUTES] = int(
-                user_input.get(
-                    CONF_EVALUATION_INTERVAL_MINUTES,
-                    DEFAULT_EVALUATION_INTERVAL_MINUTES,
+            elec_sec = user_input.get("electricity_section") or user_input
+            gas_sec = user_input.get("gas_section") or user_input
+            propane_sec = user_input.get("propane_section") or user_input
+            limits_sec = user_input.get("limits_section") or user_input
+            pol_sec = user_input.get("policies_section") or user_input
+
+            tariffs = self._options.setdefault(CONF_TARIFFS, {})
+            if CONF_ELECTRIC_COST_PER_KWH in elec_sec:
+                if elec_sec[CONF_ELECTRIC_COST_PER_KWH] is not None:
+                    tariffs[CONF_ELECTRIC_COST_PER_KWH] = float(
+                        elec_sec[CONF_ELECTRIC_COST_PER_KWH]
+                    )
+                else:
+                    tariffs.pop(CONF_ELECTRIC_COST_PER_KWH, None)
+            if CONF_ELECTRIC_RATE_SENSOR in elec_sec:
+                if elec_sec[CONF_ELECTRIC_RATE_SENSOR]:
+                    tariffs[CONF_ELECTRIC_RATE_SENSOR] = elec_sec[
+                        CONF_ELECTRIC_RATE_SENSOR
+                    ]
+                else:
+                    tariffs.pop(CONF_ELECTRIC_RATE_SENSOR, None)
+
+            if CONF_GAS_COST_PER_THERM in gas_sec:
+                if gas_sec[CONF_GAS_COST_PER_THERM] is not None:
+                    tariffs[CONF_GAS_COST_PER_THERM] = float(
+                        gas_sec[CONF_GAS_COST_PER_THERM]
+                    )
+                else:
+                    tariffs.pop(CONF_GAS_COST_PER_THERM, None)
+            if CONF_GAS_RATE_SENSOR in gas_sec:
+                if gas_sec[CONF_GAS_RATE_SENSOR]:
+                    tariffs[CONF_GAS_RATE_SENSOR] = gas_sec[CONF_GAS_RATE_SENSOR]
+                else:
+                    tariffs.pop(CONF_GAS_RATE_SENSOR, None)
+
+            if CONF_PROPANE_COST_PER_GAL in propane_sec:
+                if propane_sec[CONF_PROPANE_COST_PER_GAL] is not None:
+                    tariffs[CONF_PROPANE_COST_PER_GAL] = float(
+                        propane_sec[CONF_PROPANE_COST_PER_GAL]
+                    )
+                else:
+                    tariffs.pop(CONF_PROPANE_COST_PER_GAL, None)
+            if CONF_PROPANE_RATE_SENSOR in propane_sec:
+                if propane_sec[CONF_PROPANE_RATE_SENSOR]:
+                    tariffs[CONF_PROPANE_RATE_SENSOR] = propane_sec[
+                        CONF_PROPANE_RATE_SENSOR
+                    ]
+                else:
+                    tariffs.pop(CONF_PROPANE_RATE_SENSOR, None)
+
+            if CONF_HEAT_PUMP_SAFETY_BAND_F in limits_sec:
+                self._options[CONF_HEAT_PUMP_SAFETY_BAND_F] = float(
+                    limits_sec[CONF_HEAT_PUMP_SAFETY_BAND_F]
                 )
-            )
+
+            if CONF_CONTROL_ENABLED in pol_sec:
+                self._options[CONF_CONTROL_ENABLED] = pol_sec[CONF_CONTROL_ENABLED]
+            if CONF_CYCLING_BAND in pol_sec:
+                self._options[CONF_CYCLING_BAND] = float(pol_sec[CONF_CYCLING_BAND])
+            if CONF_EVALUATION_INTERVAL_MINUTES in pol_sec:
+                self._options[CONF_EVALUATION_INTERVAL_MINUTES] = int(
+                    pol_sec[CONF_EVALUATION_INTERVAL_MINUTES]
+                )
+
             return await self.async_step_init()
 
-        schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_CONTROL_ENABLED,
-                    default=self._options.get(CONF_CONTROL_ENABLED, False),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_CYCLING_BAND,
-                    default=self._options.get(CONF_CYCLING_BAND, DEFAULT_CYCLING_BAND),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.5,
-                        max=10.0,
-                        step=0.5,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_EVALUATION_INTERVAL_MINUTES,
-                    default=self._options.get(
-                        CONF_EVALUATION_INTERVAL_MINUTES,
-                        DEFAULT_EVALUATION_INTERVAL_MINUTES,
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=1,
-                        max=60,
-                        step=1,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-            }
+        producers = self._options.get(CONF_PRODUCERS, {})
+        has_heat_pumps = any(
+            p.get(CONF_TYPE) in ("heat_pump", "inverter_heat_pump")
+            for p in producers.values()
         )
-        return self.async_show_form(step_id="policies_menu", data_schema=schema)
+        has_gas = any(
+            p.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            and p.get(CONF_FUEL_TYPE, "natural_gas") in ("natural_gas", "ng")
+            for p in producers.values()
+        )
+        has_propane = any(
+            p.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            and p.get(CONF_FUEL_TYPE) in ("propane", "lp")
+            for p in producers.values()
+        )
+
+        tariffs = self._options.get(CONF_TARIFFS, {})
+        schema_dict: dict[Any, Any] = {}
+
+        if has_heat_pumps or not producers:
+            schema_dict[vol.Optional("electricity_section")] = section(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            CONF_ELECTRIC_COST_PER_KWH,
+                            description={
+                                "suggested_value": tariffs.get(
+                                    CONF_ELECTRIC_COST_PER_KWH
+                                )
+                            },
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=2.0,
+                                step="any",
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_ELECTRIC_RATE_SENSOR,
+                            description={
+                                "suggested_value": tariffs.get(
+                                    CONF_ELECTRIC_RATE_SENSOR
+                                )
+                            },
+                        ): selector.EntitySelector(
+                            selector.EntitySelectorConfig(
+                                domain=["sensor", "input_number", "number"]
+                            )
+                        ),
+                    }
+                )
+            )
+
+        if has_gas:
+            schema_dict[vol.Optional("gas_section")] = section(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            CONF_GAS_COST_PER_THERM,
+                            description={
+                                "suggested_value": tariffs.get(CONF_GAS_COST_PER_THERM)
+                            },
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=10.0,
+                                step="any",
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_GAS_RATE_SENSOR,
+                            description={
+                                "suggested_value": tariffs.get(CONF_GAS_RATE_SENSOR)
+                            },
+                        ): selector.EntitySelector(
+                            selector.EntitySelectorConfig(
+                                domain=["sensor", "input_number", "number"]
+                            )
+                        ),
+                    }
+                )
+            )
+
+        if has_propane:
+            schema_dict[vol.Optional("propane_section")] = section(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            CONF_PROPANE_COST_PER_GAL,
+                            description={
+                                "suggested_value": tariffs.get(
+                                    CONF_PROPANE_COST_PER_GAL
+                                )
+                            },
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=15.0,
+                                step="any",
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_PROPANE_RATE_SENSOR,
+                            description={
+                                "suggested_value": tariffs.get(CONF_PROPANE_RATE_SENSOR)
+                            },
+                        ): selector.EntitySelector(
+                            selector.EntitySelectorConfig(
+                                domain=["sensor", "input_number", "number"]
+                            )
+                        ),
+                    }
+                )
+            )
+
+        if has_heat_pumps:
+            schema_dict[vol.Optional("limits_section")] = section(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            CONF_HEAT_PUMP_SAFETY_BAND_F,
+                            default=self._options.get(
+                                CONF_HEAT_PUMP_SAFETY_BAND_F,
+                                DEFAULT_HEAT_PUMP_SAFETY_BAND_F,
+                            ),
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=20.0,
+                                step=0.5,
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                    }
+                )
+            )
+
+        schema_dict[vol.Optional("policies_section")] = section(
+            vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_CONTROL_ENABLED,
+                        default=self._options.get(CONF_CONTROL_ENABLED, False),
+                    ): selector.BooleanSelector(),
+                    vol.Optional(
+                        CONF_CYCLING_BAND,
+                        default=self._options.get(
+                            CONF_CYCLING_BAND, DEFAULT_CYCLING_BAND
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0.5,
+                            max=10.0,
+                            step=0.5,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_EVALUATION_INTERVAL_MINUTES,
+                        default=self._options.get(
+                            CONF_EVALUATION_INTERVAL_MINUTES,
+                            DEFAULT_EVALUATION_INTERVAL_MINUTES,
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=60,
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            )
+        )
+
+        return self.async_show_form(
+            step_id="policies_menu", data_schema=vol.Schema(schema_dict)
+        )
 
     async def async_step_producers_menu(
         self, user_input: dict[str, Any] | None = None
@@ -518,7 +586,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             if choice == "back":
                 return await self.async_step_init()
             self._selected_producer_id = choice
-            return await self.async_step_producer_manage()
+            return await self.async_step_producer_edit()
 
         producers = self._options.setdefault(CONF_PRODUCERS, {})
         options = [{"value": "add", "label": "+ Add a new producer"}]
@@ -542,39 +610,8 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_producer_manage(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Choose action for selected producer."""
-        if user_input is not None:
-            act = user_input["action"]
-            if act == "edit":
-                return await self.async_step_producer_edit()
-            if act == "delete":
-                return await self.async_step_producer_delete()
-            return await self.async_step_producers_menu()
-
-        p_id = self._selected_producer_id or ""
-        p_name = (
-            self._options.get(CONF_PRODUCERS, {}).get(p_id, {}).get(CONF_NAME, p_id)
-        )
-
-        schema = vol.Schema(
-            {
-                vol.Required("action", default="edit"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            {"value": "edit", "label": f"Edit {p_name}"},
-                            {"value": "delete", "label": f"Delete {p_name}"},
-                            {"value": "back", "label": "Back to Producers List"},
-                        ],
-                        mode=selector.SelectSelectorMode.LIST,
-                    )
-                )
-            }
-        )
-        return self.async_show_form(
-            step_id="producer_manage",
-            data_schema=schema,
-            description_placeholders={"producer_name": p_name},
-        )
+        """Redirect directly to producer edit."""
+        return await self.async_step_producer_edit(user_input)
 
     async def async_step_producer_add(
         self, user_input: dict[str, Any] | None = None
@@ -582,53 +619,120 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         """Add a new producer."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            p_id = user_input[CONF_ID].strip().lower().replace(" ", "_")
-            if p_id in self._options.get(CONF_PRODUCERS, {}):
-                errors["base"] = "producer_id_exists"
-            else:
-                profile = user_input.get(CONF_PROFILE)
-                if profile == "none":
-                    profile = None
-                self._options[CONF_PRODUCERS][p_id] = {
-                    CONF_NAME: user_input.get(CONF_NAME, p_id),
-                    CONF_TYPE: user_input[CONF_TYPE],
-                    CONF_PROFILE: profile,
-                    CONF_FUEL_TYPE: user_input.get(CONF_FUEL_TYPE, "natural_gas"),
-                }
+            if user_input.get("cancel"):
                 return await self.async_step_producers_menu()
 
-        profile_choices = await async_get_available_producer_profiles(self.hass)
+            name = (
+                user_input.get(CONF_NAME, "").strip()
+                if user_input.get(CONF_NAME)
+                else ""
+            )
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            else:
+                raw_id = (
+                    user_input.get(CONF_ID, "").strip()
+                    if user_input.get(CONF_ID)
+                    else ""
+                )
+                if raw_id:
+                    p_id = re.sub(r"[^a-z0-9_]+", "_", raw_id.lower()).strip("_")
+                else:
+                    base_slug = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_")
+                    if not base_slug:
+                        base_slug = "producer"
+                    p_id = base_slug
+                    counter = 2
+                    while p_id in self._options.get(CONF_PRODUCERS, {}):
+                        p_id = f"{base_slug}_{counter}"
+                        counter += 1
+
+                if raw_id and p_id in self._options.get(CONF_PRODUCERS, {}):
+                    errors["base"] = "producer_id_exists"
+                else:
+                    p_type = user_input.get(CONF_TYPE, "heat_pump")
+                    if p_type in ("heat_pump", "inverter_heat_pump"):
+                        profile = user_input.get("heat_pump_profile") or user_input.get(
+                            CONF_PROFILE
+                        )
+                    else:
+                        profile = user_input.get("boiler_profile") or user_input.get(
+                            CONF_PROFILE
+                        )
+
+                    if profile == "none":
+                        profile = None
+
+                    producer_entry = {
+                        CONF_NAME: name,
+                        CONF_TYPE: p_type,
+                        CONF_PROFILE: profile,
+                    }
+                    if p_type in ("boiler", "modulating_boiler"):
+                        producer_entry[CONF_FUEL_TYPE] = user_input.get(
+                            CONF_FUEL_TYPE, "natural_gas"
+                        )
+                    self._options.setdefault(CONF_PRODUCERS, {})[p_id] = producer_entry
+                    return await self.async_step_producers_menu()
+
+        hp_profiles = await async_get_available_producer_profiles(
+            self.hass, category="heat_pump"
+        )
+        boiler_profiles = await async_get_available_producer_profiles(
+            self.hass, category="boiler"
+        )
+
+        hp_default = "generic/cold_climate_heat_pump.json"
+        if not any(p["value"] == hp_default for p in hp_profiles):
+            hp_default = hp_profiles[0]["value"] if hp_profiles else "none"
+
+        boiler_default = "generic/modulating_condensing_boiler.json"
+        if not any(p["value"] == boiler_default for p in boiler_profiles):
+            boiler_default = boiler_profiles[0]["value"] if boiler_profiles else "none"
+
         schema = vol.Schema(
             {
-                vol.Required(CONF_ID): str,
-                vol.Required(CONF_NAME): str,
-                vol.Required(
-                    CONF_TYPE, default="inverter_heat_pump"
-                ): selector.SelectSelector(
+                vol.Optional(CONF_NAME): str,
+                vol.Optional(CONF_ID): str,
+                vol.Optional(CONF_TYPE, default="heat_pump"): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[
                             {
-                                "value": "inverter_heat_pump",
-                                "label": "Inverter Heat Pump",
+                                "value": "heat_pump",
+                                "label": "Heat Pump / Mini-Split",
                             },
                             {
-                                "value": "modulating_boiler",
-                                "label": "Modulating Boiler",
+                                "value": "boiler",
+                                "label": "Boiler",
                             },
                         ],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Optional(
-                    CONF_PROFILE, default=profile_choices[0]["value"]
+                Optional(
+                    "heat_pump_profile",
+                    default=hp_default,
+                    visible={"field": CONF_TYPE, "value": "heat_pump"},
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=profile_choices,
+                        options=hp_profiles,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Optional(
-                    CONF_FUEL_TYPE, default="natural_gas"
+                Optional(
+                    "boiler_profile",
+                    default=boiler_default,
+                    visible={"field": CONF_TYPE, "value": "boiler"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=boiler_profiles,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    CONF_FUEL_TYPE,
+                    default="natural_gas",
+                    visible={"field": CONF_TYPE, "value": "boiler"},
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[
@@ -638,6 +742,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional("cancel", default=False): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(
@@ -652,48 +757,115 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         p_conf = self._options.get(CONF_PRODUCERS, {}).get(p_id, {})
 
         if user_input is not None:
-            profile = user_input.get(CONF_PROFILE)
+            if user_input.get("cancel"):
+                return await self.async_step_producers_menu()
+
+            if user_input.get("delete_producer"):
+                self._options.get(CONF_PRODUCERS, {}).pop(p_id, None)
+                for sp in self._options.get(CONF_SPACES, []):
+                    sp[CONF_EMITTERS] = [
+                        e
+                        for e in sp.get(CONF_EMITTERS, [])
+                        if e.get(CONF_PRODUCER) != p_id
+                    ]
+                return await self.async_step_producers_menu()
+
+            p_type = user_input[CONF_TYPE]
+            if p_type in ("heat_pump", "inverter_heat_pump"):
+                profile = user_input.get("heat_pump_profile") or user_input.get(
+                    CONF_PROFILE
+                )
+            else:
+                profile = user_input.get("boiler_profile") or user_input.get(
+                    CONF_PROFILE
+                )
+
             if profile == "none":
                 profile = None
+
             p_conf[CONF_NAME] = user_input.get(CONF_NAME, p_id)
-            p_conf[CONF_TYPE] = user_input[CONF_TYPE]
+            p_conf[CONF_TYPE] = p_type
             p_conf[CONF_PROFILE] = profile
-            p_conf[CONF_FUEL_TYPE] = user_input.get(CONF_FUEL_TYPE, "natural_gas")
+            if p_type in ("boiler", "modulating_boiler"):
+                p_conf[CONF_FUEL_TYPE] = user_input.get(CONF_FUEL_TYPE, "natural_gas")
+            else:
+                p_conf.pop(CONF_FUEL_TYPE, None)
             return await self.async_step_producers_menu()
 
-        profile_choices = await async_get_available_producer_profiles(self.hass)
+        hp_profiles = await async_get_available_producer_profiles(
+            self.hass, category="heat_pump"
+        )
+        boiler_profiles = await async_get_available_producer_profiles(
+            self.hass, category="boiler"
+        )
+
+        hp_default = "generic/cold_climate_heat_pump.json"
+        if not any(p["value"] == hp_default for p in hp_profiles):
+            hp_default = hp_profiles[0]["value"] if hp_profiles else "none"
+
+        boiler_default = "generic/modulating_condensing_boiler.json"
+        if not any(p["value"] == boiler_default for p in boiler_profiles):
+            boiler_default = boiler_profiles[0]["value"] if boiler_profiles else "none"
+
+        raw_type = p_conf.get(CONF_TYPE, "heat_pump")
+        norm_type = (
+            "heat_pump" if raw_type in ("heat_pump", "inverter_heat_pump") else "boiler"
+        )
         current_profile = p_conf.get(CONF_PROFILE) or "none"
+
+        hp_selected = (
+            current_profile
+            if any(p["value"] == current_profile for p in hp_profiles)
+            else hp_default
+        )
+        boiler_selected = (
+            current_profile
+            if any(p["value"] == current_profile for p in boiler_profiles)
+            else boiler_default
+        )
 
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=p_conf.get(CONF_NAME, p_id)): str,
-                vol.Required(
-                    CONF_TYPE, default=p_conf.get(CONF_TYPE, "inverter_heat_pump")
-                ): selector.SelectSelector(
+                vol.Required(CONF_TYPE, default=norm_type): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[
                             {
-                                "value": "inverter_heat_pump",
-                                "label": "Inverter Heat Pump",
+                                "value": "heat_pump",
+                                "label": "Heat Pump / Mini-Split",
                             },
                             {
-                                "value": "modulating_boiler",
-                                "label": "Modulating Boiler",
+                                "value": "boiler",
+                                "label": "Boiler",
                             },
                         ],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Optional(
-                    CONF_PROFILE, default=current_profile
+                Optional(
+                    "heat_pump_profile",
+                    default=hp_selected,
+                    visible={"field": CONF_TYPE, "value": "heat_pump"},
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=profile_choices,
+                        options=hp_profiles,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Optional(
-                    CONF_FUEL_TYPE, default=p_conf.get(CONF_FUEL_TYPE, "natural_gas")
+                Optional(
+                    "boiler_profile",
+                    default=boiler_selected,
+                    visible={"field": CONF_TYPE, "value": "boiler"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=boiler_profiles,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    CONF_FUEL_TYPE,
+                    default=p_conf.get(CONF_FUEL_TYPE, "natural_gas"),
+                    visible={"field": CONF_TYPE, "value": "boiler"},
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[
@@ -703,6 +875,10 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional("cancel", default=False): selector.BooleanSelector(),
+                vol.Optional(
+                    "delete_producer", default=False
+                ): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(
@@ -714,25 +890,8 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_producer_delete(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Delete a producer."""
-        p_id = self._selected_producer_id or ""
-        p_name = (
-            self._options.get(CONF_PRODUCERS, {}).get(p_id, {}).get(CONF_NAME, p_id)
-        )
-
-        if user_input is not None:
-            if user_input.get("confirm", False):
-                self._options.get(CONF_PRODUCERS, {}).pop(p_id, None)
-            return await self.async_step_producers_menu()
-
-        schema = vol.Schema(
-            {vol.Required("confirm", default=True): selector.BooleanSelector()}
-        )
-        return self.async_show_form(
-            step_id="producer_delete",
-            data_schema=schema,
-            description_placeholders={"producer_name": p_name},
-        )
+        """Redirect delete to producer edit."""
+        return await self.async_step_producer_edit(user_input)
 
     async def async_step_spaces_menu(
         self, user_input: dict[str, Any] | None = None
@@ -823,79 +982,280 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     ) -> config_entries.ConfigFlowResult:
         """Add a new space."""
         errors: dict[str, str] = {}
-        if user_input is not None:
-            s_id = user_input[CONF_ID].strip().lower().replace(" ", "_")
-            existing_ids = [s.get(CONF_ID) for s in self._options.get(CONF_SPACES, [])]
-            if s_id in existing_ids:
-                errors["base"] = "space_id_exists"
-            else:
-                space_entry = {
-                    CONF_ID: s_id,
-                    CONF_NAME: user_input[CONF_NAME],
-                    CONF_TEMP_SENSOR: user_input[CONF_TEMP_SENSOR],
-                    CONF_FLOOR_AREA: float(user_input.get(CONF_FLOOR_AREA, 300.0)),
-                    CONF_CEILING_HEIGHT: float(
-                        user_input.get(CONF_CEILING_HEIGHT, 8.0)
-                    ),
-                    CONF_PRIORITY: int(user_input.get(CONF_PRIORITY, 5)),
-                    CONF_SHARED_BOILER_ROLE: user_input.get(
-                        CONF_SHARED_BOILER_ROLE, "independent"
-                    ),
-                    CONF_PRESETS: {},
-                    CONF_EMITTERS: [],
-                }
-                if user_input.get(CONF_WINDOW_SENSOR):
-                    space_entry[CONF_WINDOW_SENSOR] = user_input[CONF_WINDOW_SENSOR]
-
-                self._options.setdefault(CONF_SPACES, []).append(space_entry)
-                self._selected_space_id = s_id
-                return await self.async_step_space_manage()
-
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_ID): str,
-                vol.Required(CONF_NAME): str,
-                vol.Required(CONF_TEMP_SENSOR): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="sensor")
-                ),
-                vol.Optional(CONF_WINDOW_SENSOR): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="binary_sensor")
-                ),
-                vol.Optional(CONF_FLOOR_AREA, default=300.0): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=10.0,
-                        max=10000.0,
-                        step=10.0,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(CONF_CEILING_HEIGHT, default=8.0): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=5.0,
-                        max=30.0,
-                        step=0.5,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(CONF_PRIORITY, default=5): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=1, max=10, step=1, mode=selector.NumberSelectorMode.BOX
-                    )
-                ),
-                vol.Optional(
-                    CONF_SHARED_BOILER_ROLE, default="independent"
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            {"value": "independent", "label": "Independent"},
-                            {"value": "master", "label": "Master"},
-                            {"value": "slave", "label": "Slave"},
-                        ],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-            }
+        producers = self._options.get(CONF_PRODUCERS, {})
+        has_boilers = any(
+            p.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            for p in producers.values()
         )
+
+        if user_input is not None:
+            if user_input.get("cancel"):
+                return await self.async_step_spaces_menu()
+
+            name = (
+                user_input.get(CONF_NAME, "").strip()
+                if user_input.get(CONF_NAME)
+                else ""
+            )
+            temp_sensor = user_input.get(CONF_TEMP_SENSOR)
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            if not temp_sensor:
+                errors[CONF_TEMP_SENSOR] = "temp_sensor_required"
+
+            if not errors:
+                raw_id = (
+                    user_input.get(CONF_ID, "").strip()
+                    if user_input.get(CONF_ID)
+                    else ""
+                )
+                if raw_id:
+                    s_id = re.sub(r"[^a-z0-9_]+", "_", raw_id.lower()).strip("_")
+                else:
+                    base_slug = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_")
+                    if not base_slug:
+                        base_slug = "space"
+                    s_id = base_slug
+                    existing_ids = [
+                        s.get(CONF_ID) for s in self._options.get(CONF_SPACES, [])
+                    ]
+                    counter = 2
+                    while s_id in existing_ids:
+                        s_id = f"{base_slug}_{counter}"
+                        counter += 1
+
+                existing_ids = [
+                    s.get(CONF_ID) for s in self._options.get(CONF_SPACES, [])
+                ]
+                if raw_id and s_id in existing_ids:
+                    errors["base"] = "space_id_exists"
+                else:
+                    emitters = []
+                    if user_input.get("configure_primary_emitter"):
+                        emitter_entity = user_input.get("emitter_entity_id")
+                        emitter_type = user_input.get("emitter_type", "mini_split")
+                        if emitter_type == "mini_split":
+                            emitter_prod = user_input.get(
+                                "hp_emitter_producer"
+                            ) or user_input.get("emitter_producer")
+                        else:
+                            emitter_prod = user_input.get(
+                                "boiler_emitter_producer"
+                            ) or user_input.get("emitter_producer")
+
+                        if emitter_entity and emitter_prod:
+                            emitter_entry = {
+                                CONF_TYPE: emitter_type,
+                                CONF_PRODUCER: emitter_prod,
+                                CONF_ENTITY_ID: emitter_entity,
+                                CONF_OFFSET: 0.0,
+                            }
+                            if emitter_type == "mini_split":
+                                emitter_entry[CONF_NOMINAL_BTU] = float(
+                                    user_input.get("emitter_nominal_btu", 12000.0)
+                                )
+                            elif emitter_type == "hydronic":
+                                emitter_entry[CONF_ZONE_ID] = user_input.get(
+                                    "emitter_zone_id", "z1"
+                                )
+                            emitters.append(emitter_entry)
+
+                    space_entry = {
+                        CONF_ID: s_id,
+                        CONF_NAME: name,
+                        CONF_TEMP_SENSOR: temp_sensor,
+                        CONF_FLOOR_AREA: float(user_input.get(CONF_FLOOR_AREA, 300.0)),
+                        CONF_CEILING_HEIGHT: float(
+                            user_input.get(CONF_CEILING_HEIGHT, 8.0)
+                        ),
+                        CONF_PRIORITY: int(user_input.get(CONF_PRIORITY, 5)),
+                        CONF_SHARED_BOILER_ROLE: user_input.get(
+                            CONF_SHARED_BOILER_ROLE, "independent"
+                        ),
+                        CONF_PRESETS: {},
+                        CONF_EMITTERS: emitters,
+                    }
+                    if user_input.get(CONF_WINDOW_SENSOR):
+                        space_entry[CONF_WINDOW_SENSOR] = user_input[CONF_WINDOW_SENSOR]
+
+                    self._options.setdefault(CONF_SPACES, []).append(space_entry)
+                    self._selected_space_id = s_id
+                    return await self.async_step_space_manage()
+
+        schema_dict: dict[Any, Any] = {
+            vol.Optional(CONF_NAME): str,
+            vol.Optional(CONF_ID): str,
+            vol.Optional(CONF_TEMP_SENSOR): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor")
+            ),
+            vol.Optional(CONF_FLOOR_AREA, default=300.0): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=10.0,
+                    max=10000.0,
+                    step=10.0,
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(CONF_CEILING_HEIGHT, default=8.0): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=5.0,
+                    max=30.0,
+                    step=0.5,
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(CONF_PRIORITY, default=5): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1, max=10, step=1, mode=selector.NumberSelectorMode.BOX
+                )
+            ),
+            vol.Optional(CONF_WINDOW_SENSOR): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="binary_sensor")
+            ),
+            Optional(
+                CONF_SHARED_BOILER_ROLE,
+                default="independent",
+                visible=has_boilers,
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        {
+                            "value": "independent",
+                            "label": "Independent (Dedicated or non-shared zone)",
+                        },
+                        {
+                            "value": "primary",
+                            "label": "Primary (Drives the shared boiler loop)",
+                        },
+                        {
+                            "value": "secondary",
+                            "label": "Secondary (Passively follows shared boiler loop)",
+                        },
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+
+        if producers:
+            schema_dict[vol.Optional("configure_primary_emitter", default=False)] = (
+                selector.BooleanSelector()
+            )
+
+            hp_options = [
+                {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+                for p_id, p_conf in producers.items()
+                if p_conf.get(CONF_TYPE) in ("heat_pump", "inverter_heat_pump")
+            ]
+            boiler_options = [
+                {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+                for p_id, p_conf in producers.items()
+                if p_conf.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            ]
+            all_prod_options = [
+                {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+                for p_id, p_conf in producers.items()
+            ]
+            if not hp_options:
+                hp_options = all_prod_options
+            if not boiler_options:
+                boiler_options = all_prod_options
+
+            has_hp = any(
+                p.get(CONF_TYPE) in ("heat_pump", "inverter_heat_pump")
+                for p in producers.values()
+            )
+            default_emitter_type = (
+                "hydronic" if not has_hp and boiler_options else "mini_split"
+            )
+
+            schema_dict[
+                Optional(
+                    "emitter_type",
+                    default=default_emitter_type,
+                    visible={"field": "configure_primary_emitter", "value": True},
+                )
+            ] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        {"value": "mini_split", "label": "Mini-Split Head"},
+                        {
+                            "value": "hydronic",
+                            "label": "Hydronic Baseboard / Radiator",
+                        },
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+            schema_dict[
+                Optional(
+                    "hp_emitter_producer",
+                    default=hp_options[0]["value"],
+                    visible=[
+                        {"field": "configure_primary_emitter", "value": True},
+                        {"field": "emitter_type", "value": "mini_split"},
+                    ],
+                )
+            ] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=hp_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+            schema_dict[
+                Optional(
+                    "boiler_emitter_producer",
+                    default=boiler_options[0]["value"],
+                    visible=[
+                        {"field": "configure_primary_emitter", "value": True},
+                        {"field": "emitter_type", "value": "hydronic"},
+                    ],
+                )
+            ] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=boiler_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+            schema_dict[
+                Optional(
+                    "emitter_entity_id",
+                    visible={"field": "configure_primary_emitter", "value": True},
+                )
+            ] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain=["climate", "switch"])
+            )
+            schema_dict[
+                Optional(
+                    "emitter_nominal_btu",
+                    default=12000.0,
+                    visible=[
+                        {"field": "configure_primary_emitter", "value": True},
+                        {"field": "emitter_type", "value": "mini_split"},
+                    ],
+                )
+            ] = selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1000.0,
+                    max=60000.0,
+                    step=1000.0,
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            )
+            schema_dict[
+                Optional(
+                    "emitter_zone_id",
+                    default="z1",
+                    visible=[
+                        {"field": "configure_primary_emitter", "value": True},
+                        {"field": "emitter_type", "value": "hydronic"},
+                    ],
+                )
+            ] = str
+
+        schema_dict[vol.Optional("cancel", default=False)] = selector.BooleanSelector()
+
+        schema = vol.Schema(schema_dict)
         return self.async_show_form(
             step_id="space_add", data_schema=schema, errors=errors
         )
@@ -912,7 +1272,24 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         if not space:
             return await self.async_step_spaces_menu()
 
+        producers = self._options.get(CONF_PRODUCERS, {})
+        has_boilers = any(
+            p.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            for p in producers.values()
+        )
+
         if user_input is not None:
+            if user_input.get("cancel"):
+                return await self.async_step_space_manage()
+
+            if user_input.get("delete_space"):
+                self._options[CONF_SPACES] = [
+                    s
+                    for s in self._options.get(CONF_SPACES, [])
+                    if s.get(CONF_ID) != s_id
+                ]
+                return await self.async_step_spaces_menu()
+
             space[CONF_NAME] = user_input[CONF_NAME]
             space[CONF_TEMP_SENSOR] = user_input[CONF_TEMP_SENSOR]
             if user_input.get(CONF_WINDOW_SENSOR):
@@ -923,7 +1300,8 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             space[CONF_CEILING_HEIGHT] = float(user_input.get(CONF_CEILING_HEIGHT, 8.0))
             space[CONF_PRIORITY] = int(user_input.get(CONF_PRIORITY, 5))
             space[CONF_SHARED_BOILER_ROLE] = user_input.get(
-                CONF_SHARED_BOILER_ROLE, "independent"
+                CONF_SHARED_BOILER_ROLE,
+                space.get(CONF_SHARED_BOILER_ROLE, "independent"),
             )
             return await self.async_step_space_manage()
 
@@ -934,12 +1312,6 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     CONF_TEMP_SENSOR, default=space.get(CONF_TEMP_SENSOR, "")
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="sensor")
-                ),
-                vol.Optional(
-                    CONF_WINDOW_SENSOR,
-                    description={"suggested_value": space.get(CONF_WINDOW_SENSOR)},
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="binary_sensor")
                 ),
                 vol.Optional(
                     CONF_FLOOR_AREA, default=space.get(CONF_FLOOR_AREA, 300.0)
@@ -970,18 +1342,36 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     )
                 ),
                 vol.Optional(
+                    CONF_WINDOW_SENSOR,
+                    description={"suggested_value": space.get(CONF_WINDOW_SENSOR)},
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="binary_sensor")
+                ),
+                Optional(
                     CONF_SHARED_BOILER_ROLE,
                     default=space.get(CONF_SHARED_BOILER_ROLE, "independent"),
+                    visible=has_boilers,
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[
-                            {"value": "independent", "label": "Independent"},
-                            {"value": "master", "label": "Master"},
-                            {"value": "slave", "label": "Slave"},
+                            {
+                                "value": "independent",
+                                "label": "Independent (Dedicated or non-shared zone)",
+                            },
+                            {
+                                "value": "primary",
+                                "label": "Primary (Drives the shared boiler loop)",
+                            },
+                            {
+                                "value": "secondary",
+                                "label": "Secondary (Passively follows shared boiler loop)",
+                            },
                         ],
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional("cancel", default=False): selector.BooleanSelector(),
+                vol.Optional("delete_space", default=False): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(
@@ -1038,7 +1428,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             if choice == "back":
                 return await self.async_step_space_manage()
             self._selected_preset_name = choice
-            return await self.async_step_preset_manage()
+            return await self.async_step_preset_edit()
 
         presets = space.setdefault(CONF_PRESETS, {})
         options = [{"value": "add", "label": "+ Add a schedule preset"}]
@@ -1072,35 +1462,8 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_preset_manage(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Choose action for selected preset."""
-        if user_input is not None:
-            act = user_input["action"]
-            if act == "edit":
-                return await self.async_step_preset_edit()
-            if act == "delete":
-                return await self.async_step_preset_delete()
-            return await self.async_step_presets_menu()
-
-        p_name = self._selected_preset_name or ""
-        schema = vol.Schema(
-            {
-                vol.Required("action", default="edit"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            {"value": "edit", "label": f"Edit {p_name}"},
-                            {"value": "delete", "label": f"Delete {p_name}"},
-                            {"value": "back", "label": "Back to Presets List"},
-                        ],
-                        mode=selector.SelectSelectorMode.LIST,
-                    )
-                )
-            }
-        )
-        return self.async_show_form(
-            step_id="preset_manage",
-            data_schema=schema,
-            description_placeholders={"preset_name": p_name},
-        )
+        """Redirect directly to preset edit."""
+        return await self.async_step_preset_edit(user_input)
 
     def _derive_preset_name_from_schedule(
         self, sched_entity: str, custom_name: str | None
@@ -1130,23 +1493,38 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             return await self.async_step_spaces_menu()
 
         if user_input is not None:
-            sched_entity = user_input["schedule_entity"]
-            custom_name = user_input.get("preset_name")
-            p_name = self._derive_preset_name_from_schedule(sched_entity, custom_name)
-
-            presets = space.setdefault(CONF_PRESETS, {})
-            if p_name in presets:
-                errors["base"] = "preset_exists"
-            else:
-                presets[p_name] = sched_entity
+            if user_input.get("cancel"):
                 return await self.async_step_presets_menu()
+
+            sched_entity = user_input.get("schedule_entity")
+            if not sched_entity:
+                errors["schedule_entity"] = "schedule_required"
+            else:
+                custom_name = user_input.get("preset_name")
+                p_name = self._derive_preset_name_from_schedule(
+                    sched_entity, custom_name
+                )
+
+                presets = space.setdefault(CONF_PRESETS, {})
+                if p_name in presets:
+                    errors["base"] = "preset_exists"
+                else:
+                    presets[p_name] = sched_entity
+                    return await self.async_step_presets_menu()
 
         schema = vol.Schema(
             {
-                vol.Required("schedule_entity"): selector.EntitySelector(
+                vol.Optional("schedule_entity"): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="schedule")
                 ),
-                vol.Optional("preset_name"): selector.TextSelector(),
+                vol.Optional(
+                    "custom_name_toggle", default=False
+                ): selector.BooleanSelector(),
+                Optional(
+                    "preset_name",
+                    visible={"field": "custom_name_toggle", "value": True},
+                ): selector.TextSelector(),
+                vol.Optional("cancel", default=False): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(
@@ -1174,6 +1552,13 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         old_entity = presets.get(old_name, "")
 
         if user_input is not None:
+            if user_input.get("cancel"):
+                return await self.async_step_presets_menu()
+
+            if user_input.get("delete_preset"):
+                presets.pop(old_name, None)
+                return await self.async_step_presets_menu()
+
             sched_entity = user_input["schedule_entity"]
             custom_name = user_input.get("preset_name")
             new_name = self._derive_preset_name_from_schedule(sched_entity, custom_name)
@@ -1197,6 +1582,10 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     "preset_name",
                     description={"suggested_value": old_name},
                 ): selector.TextSelector(),
+                vol.Optional("cancel", default=False): selector.BooleanSelector(),
+                vol.Optional(
+                    "delete_preset", default=False
+                ): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(
@@ -1209,27 +1598,8 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_preset_delete(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Delete a schedule preset."""
-        s_id = self._selected_space_id or ""
-        space = next(
-            (s for s in self._options.get(CONF_SPACES, []) if s.get(CONF_ID) == s_id),
-            None,
-        )
-        p_name = self._selected_preset_name or ""
-
-        if user_input is not None:
-            if user_input.get("confirm", False) and space:
-                space.get(CONF_PRESETS, {}).pop(p_name, None)
-            return await self.async_step_presets_menu()
-
-        schema = vol.Schema(
-            {vol.Required("confirm", default=True): selector.BooleanSelector()}
-        )
-        return self.async_show_form(
-            step_id="preset_delete",
-            data_schema=schema,
-            description_placeholders={"preset_name": p_name},
-        )
+        """Redirect delete to preset edit."""
+        return await self.async_step_preset_edit(user_input)
 
     async def async_step_emitters_menu(
         self, user_input: dict[str, Any] | None = None
@@ -1250,7 +1620,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             if choice == "back":
                 return await self.async_step_space_manage()
             self._selected_emitter_idx = int(choice)
-            return await self.async_step_emitter_manage()
+            return await self.async_step_emitter_edit()
 
         emitters = space.setdefault(CONF_EMITTERS, [])
         options = [{"value": "add", "label": "+ Add an emitter"}]
@@ -1287,38 +1657,14 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_emitter_manage(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Choose action for selected emitter."""
-        if user_input is not None:
-            act = user_input["action"]
-            if act == "edit":
-                return await self.async_step_emitter_edit()
-            if act == "delete":
-                return await self.async_step_emitter_delete()
-            return await self.async_step_emitters_menu()
-
-        schema = vol.Schema(
-            {
-                vol.Required("action", default="edit"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            {"value": "edit", "label": "Edit Emitter"},
-                            {"value": "delete", "label": "Delete Emitter"},
-                            {"value": "back", "label": "Back to Emitters List"},
-                        ],
-                        mode=selector.SelectSelectorMode.LIST,
-                    )
-                )
-            }
-        )
-        return self.async_show_form(
-            step_id="emitter_manage",
-            data_schema=schema,
-        )
+        """Redirect directly to emitter edit."""
+        return await self.async_step_emitter_edit(user_input)
 
     async def async_step_emitter_add(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Add an emitter to space."""
+        errors: dict[str, str] = {}
         producers = self._options.get(CONF_PRODUCERS, {})
         s_id = self._selected_space_id or ""
         space = next(
@@ -1336,32 +1682,72 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 description_placeholders={"space_name": space.get(CONF_NAME, s_id)},
             )
 
-        if user_input is not None:
-            emitter_data = {
-                CONF_TYPE: user_input[CONF_TYPE],
-                CONF_PRODUCER: user_input[CONF_PRODUCER],
-                CONF_ENTITY_ID: user_input[CONF_ENTITY_ID],
-                CONF_OFFSET: float(user_input.get(CONF_OFFSET, 0.0)),
-            }
-            if user_input[CONF_TYPE] == "mini_split":
-                emitter_data[CONF_NOMINAL_BTU] = float(
-                    user_input.get(CONF_NOMINAL_BTU, 12000.0)
-                )
-            elif user_input[CONF_TYPE] == "hydronic":
-                emitter_data[CONF_ZONE_ID] = user_input.get(CONF_ZONE_ID, "z1")
-
-            space.setdefault(CONF_EMITTERS, []).append(emitter_data)
-            return await self.async_step_emitters_menu()
-
-        prod_options = [
+        hp_options = [
+            {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+            for p_id, p_conf in producers.items()
+            if p_conf.get(CONF_TYPE) in ("heat_pump", "inverter_heat_pump")
+        ]
+        boiler_options = [
+            {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+            for p_id, p_conf in producers.items()
+            if p_conf.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+        ]
+        all_prod_options = [
             {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
             for p_id, p_conf in producers.items()
         ]
-        default_prod = prod_options[0]["value"] if prod_options else ""
+        if not hp_options:
+            hp_options = all_prod_options
+        if not boiler_options:
+            boiler_options = all_prod_options
+
+        has_hp = any(
+            p.get(CONF_TYPE) in ("heat_pump", "inverter_heat_pump")
+            for p in producers.values()
+        )
+        default_emitter_type = (
+            "hydronic" if not has_hp and boiler_options else "mini_split"
+        )
+
+        if user_input is not None:
+            if user_input.get("cancel"):
+                return await self.async_step_emitters_menu()
+
+            entity_id = user_input.get(CONF_ENTITY_ID)
+            if not entity_id:
+                errors[CONF_ENTITY_ID] = "entity_required"
+            else:
+                emitter_type = user_input.get(CONF_TYPE, default_emitter_type)
+                if emitter_type == "mini_split":
+                    emitter_prod = user_input.get(
+                        "hp_emitter_producer"
+                    ) or user_input.get(CONF_PRODUCER, hp_options[0]["value"])
+                else:
+                    emitter_prod = user_input.get(
+                        "boiler_emitter_producer"
+                    ) or user_input.get(CONF_PRODUCER, boiler_options[0]["value"])
+
+                emitter_data = {
+                    CONF_TYPE: emitter_type,
+                    CONF_PRODUCER: emitter_prod,
+                    CONF_ENTITY_ID: entity_id,
+                    CONF_OFFSET: float(user_input.get(CONF_OFFSET, 0.0)),
+                }
+                if emitter_type == "mini_split":
+                    emitter_data[CONF_NOMINAL_BTU] = float(
+                        user_input.get(CONF_NOMINAL_BTU, 12000.0)
+                    )
+                elif emitter_type == "hydronic":
+                    emitter_data[CONF_ZONE_ID] = user_input.get(CONF_ZONE_ID, "z1")
+
+                space.setdefault(CONF_EMITTERS, []).append(emitter_data)
+                return await self.async_step_emitters_menu()
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_TYPE, default="mini_split"): selector.SelectSelector(
+                vol.Required(
+                    CONF_TYPE, default=default_emitter_type
+                ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[
                             {"value": "mini_split", "label": "Mini-Split Head"},
@@ -1373,15 +1759,27 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Required(
-                    CONF_PRODUCER, default=default_prod
+                Optional(
+                    "hp_emitter_producer",
+                    default=hp_options[0]["value"],
+                    visible={"field": CONF_TYPE, "value": "mini_split"},
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=prod_options,
+                        options=hp_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Required(CONF_ENTITY_ID): selector.EntitySelector(
+                Optional(
+                    "boiler_emitter_producer",
+                    default=boiler_options[0]["value"],
+                    visible={"field": CONF_TYPE, "value": "hydronic"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=boiler_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(CONF_ENTITY_ID): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain=["climate", "switch"])
                 ),
                 vol.Optional(CONF_OFFSET, default=0.0): selector.NumberSelector(
@@ -1392,8 +1790,10 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Optional(
-                    CONF_NOMINAL_BTU, default=12000.0
+                Optional(
+                    CONF_NOMINAL_BTU,
+                    default=12000.0,
+                    visible={"field": CONF_TYPE, "value": "mini_split"},
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
                         min=1000.0,
@@ -1402,12 +1802,18 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Optional(CONF_ZONE_ID, default="z1"): str,
+                Optional(
+                    CONF_ZONE_ID,
+                    default="z1",
+                    visible={"field": CONF_TYPE, "value": "hydronic"},
+                ): str,
+                vol.Optional("cancel", default=False): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(
             step_id="emitter_add",
             data_schema=schema,
+            errors=errors,
             description_placeholders={"space_name": space.get(CONF_NAME, s_id)},
         )
 
@@ -1430,25 +1836,70 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         emitter_data = emitters[self._selected_emitter_idx]
 
         if user_input is not None:
-            emitter_data[CONF_TYPE] = user_input[CONF_TYPE]
-            emitter_data[CONF_PRODUCER] = user_input[CONF_PRODUCER]
+            if user_input.get("cancel"):
+                return await self.async_step_emitters_menu()
+
+            if user_input.get("delete_emitter"):
+                emitters.pop(self._selected_emitter_idx)
+                return await self.async_step_emitters_menu()
+
+            e_type = user_input.get(
+                CONF_TYPE, emitter_data.get(CONF_TYPE, "mini_split")
+            )
+            if e_type == "mini_split":
+                emitter_prod = user_input.get("hp_emitter_producer") or user_input.get(
+                    CONF_PRODUCER, emitter_data.get(CONF_PRODUCER)
+                )
+            else:
+                emitter_prod = user_input.get(
+                    "boiler_emitter_producer"
+                ) or user_input.get(CONF_PRODUCER, emitter_data.get(CONF_PRODUCER))
+
+            emitter_data[CONF_TYPE] = e_type
+            emitter_data[CONF_PRODUCER] = emitter_prod
             emitter_data[CONF_ENTITY_ID] = user_input[CONF_ENTITY_ID]
             emitter_data[CONF_OFFSET] = float(user_input.get(CONF_OFFSET, 0.0))
-            if user_input[CONF_TYPE] == "mini_split":
+            if e_type == "mini_split":
                 emitter_data[CONF_NOMINAL_BTU] = float(
                     user_input.get(CONF_NOMINAL_BTU, 12000.0)
                 )
                 emitter_data.pop(CONF_ZONE_ID, None)
-            elif user_input[CONF_TYPE] == "hydronic":
+            elif e_type == "hydronic":
                 emitter_data[CONF_ZONE_ID] = user_input.get(CONF_ZONE_ID, "z1")
                 emitter_data.pop(CONF_NOMINAL_BTU, None)
             return await self.async_step_emitters_menu()
 
         producers = self._options.get(CONF_PRODUCERS, {})
-        prod_options = [
+        hp_options = [
+            {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+            for p_id, p_conf in producers.items()
+            if p_conf.get(CONF_TYPE) in ("heat_pump", "inverter_heat_pump")
+        ]
+        boiler_options = [
+            {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+            for p_id, p_conf in producers.items()
+            if p_conf.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+        ]
+        all_prod_options = [
             {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
             for p_id, p_conf in producers.items()
         ]
+        if not hp_options:
+            hp_options = all_prod_options
+        if not boiler_options:
+            boiler_options = all_prod_options
+
+        curr_prod = emitter_data.get(CONF_PRODUCER, "")
+        hp_default = (
+            curr_prod
+            if any(p["value"] == curr_prod for p in hp_options)
+            else hp_options[0]["value"]
+        )
+        boiler_default = (
+            curr_prod
+            if any(p["value"] == curr_prod for p in boiler_options)
+            else boiler_options[0]["value"]
+        )
 
         schema = vol.Schema(
             {
@@ -1466,11 +1917,23 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Required(
-                    CONF_PRODUCER, default=emitter_data.get(CONF_PRODUCER, "")
+                Optional(
+                    "hp_emitter_producer",
+                    default=hp_default,
+                    visible={"field": CONF_TYPE, "value": "mini_split"},
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=prod_options,
+                        options=hp_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    "boiler_emitter_producer",
+                    default=boiler_default,
+                    visible={"field": CONF_TYPE, "value": "hydronic"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=boiler_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -1489,9 +1952,10 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Optional(
+                Optional(
                     CONF_NOMINAL_BTU,
                     default=emitter_data.get(CONF_NOMINAL_BTU, 12000.0),
+                    visible={"field": CONF_TYPE, "value": "mini_split"},
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
                         min=1000.0,
@@ -1500,9 +1964,15 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Optional(
-                    CONF_ZONE_ID, default=emitter_data.get(CONF_ZONE_ID, "z1")
+                Optional(
+                    CONF_ZONE_ID,
+                    default=emitter_data.get(CONF_ZONE_ID, "z1"),
+                    visible={"field": CONF_TYPE, "value": "hydronic"},
                 ): str,
+                vol.Optional("cancel", default=False): selector.BooleanSelector(),
+                vol.Optional(
+                    "delete_emitter", default=False
+                ): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(
@@ -1513,28 +1983,5 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
     async def async_step_emitter_delete(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Delete an emitter."""
-        s_id = self._selected_space_id or ""
-        space = next(
-            (s for s in self._options.get(CONF_SPACES, []) if s.get(CONF_ID) == s_id),
-            None,
-        )
-
-        if user_input is not None:
-            if (
-                user_input.get("confirm", False)
-                and space
-                and self._selected_emitter_idx is not None
-            ):
-                emitters = space.get(CONF_EMITTERS, [])
-                if self._selected_emitter_idx < len(emitters):
-                    emitters.pop(self._selected_emitter_idx)
-            return await self.async_step_emitters_menu()
-
-        schema = vol.Schema(
-            {vol.Required("confirm", default=True): selector.BooleanSelector()}
-        )
-        return self.async_show_form(
-            step_id="emitter_delete",
-            data_schema=schema,
-        )
+        """Redirect delete to emitter edit."""
+        return await self.async_step_emitter_edit(user_input)

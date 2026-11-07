@@ -107,7 +107,7 @@ SPACE_SCHEMA = vol.Schema(
         vol.Optional(CONF_WINDOW_SENSOR): cv.entity_id,
         vol.Optional(CONF_PRIORITY, default=5): cv.positive_int,
         vol.Optional(CONF_SHARED_BOILER_ROLE, default="independent"): vol.In(
-            ["independent", "master", "slave"]
+            ["independent", "primary", "secondary"]
         ),
         vol.Optional(CONF_FLOOR_AREA, default=300.0): vol.Coerce(float),
         vol.Optional(CONF_CEILING_HEIGHT, default=9.0): vol.Coerce(float),
@@ -347,6 +347,8 @@ class HvacFusionManager:
         from hvac_crossover import FuelType
 
         fuel_type = getattr(boiler, "fuel_type", FuelType.NATURAL_GAS)
+        if self.tariffs.elec_cost_per_kwh <= 0:
+            return None
         if fuel_type == FuelType.PROPANE and self.tariffs.propane_cost_per_gal <= 0:
             return None
         if fuel_type != FuelType.PROPANE and self.tariffs.gas_cost_per_therm <= 0:
@@ -371,6 +373,8 @@ class HvacFusionManager:
         from hvac_crossover import FuelType
 
         fuel_type = getattr(boiler, "fuel_type", FuelType.NATURAL_GAS)
+        if self.tariffs.elec_cost_per_kwh <= 0:
+            return None
         if fuel_type == FuelType.PROPANE and self.tariffs.propane_cost_per_gal <= 0:
             return None
         if fuel_type != FuelType.PROPANE and self.tariffs.gas_cost_per_therm <= 0:
@@ -397,7 +401,7 @@ class HvacFusionManager:
         for p_id, p_conf in self.conf.get(CONF_PRODUCERS, {}).items():
             p_name = p_conf.get(CONF_NAME, p_id)
             profile_name = p_conf.get(CONF_PROFILE)
-            p_type = p_conf.get(CONF_TYPE, "inverter_heat_pump")
+            p_type = p_conf.get(CONF_TYPE, "heat_pump")
             fuel_str = p_conf.get(CONF_FUEL_TYPE, "natural_gas").lower()
             fuel = (
                 FuelType.PROPANE
@@ -414,7 +418,7 @@ class HvacFusionManager:
                     fuel_type=fuel,
                 )
                 producers.append(prod)
-            elif p_type == "modulating_boiler":
+            elif p_type in ("boiler", "modulating_boiler"):
                 prod = ModulatingBoilerProducer(
                     id=p_id,
                     name=p_name,
@@ -426,13 +430,13 @@ class HvacFusionManager:
                 producers.append(prod)
             else:
                 _LOGGER.warning(
-                    "Producer %s requires either a profile or modulating_boiler type",
+                    "Producer %s requires either a profile or boiler type",
                     p_id,
                 )
 
         role_map = {
-            "master": SharedBoilerRole.MASTER,
-            "slave": SharedBoilerRole.SLAVE,
+            "primary": SharedBoilerRole.PRIMARY,
+            "secondary": SharedBoilerRole.SECONDARY,
             "independent": SharedBoilerRole.INDEPENDENT,
         }
 
@@ -583,8 +587,15 @@ class HvacFusionManager:
             spaces=space_conditions,
         )
 
-        plan = self.coordinator.evaluate(snapshot)
-        self.last_plan = plan
+        try:
+            plan = self.coordinator.evaluate(snapshot)
+            self.last_plan = plan
+        except ZeroDivisionError as err:
+            _LOGGER.warning(
+                "Cannot evaluate crossover plan due to missing or zero tariffs: %s",
+                err,
+            )
+            return
 
         _LOGGER.info(
             "Evaluate, outdoor %s, conditions %s, plan %s",
@@ -597,7 +608,7 @@ class HvacFusionManager:
         await self._dispatch_subsidiary_commands(plan, not self.control_enabled)
 
         # Update virtual climate entity states
-        for entity in self.space_entities.values():
+        for s_id, entity in self.space_entities.items():
             s_dir = plan.space_directives.get(s_id)
             entity.update_from_directive(s_dir, plan.diagnostics)
             entity.async_write_ha_state()
@@ -1325,11 +1336,17 @@ async def async_setup_entry(
         await manager.async_evaluate()
 
     if hass.is_running:
-        hass.async_create_task(manager.async_evaluate())
+        await manager.async_evaluate()
     else:
-        entry.async_on_unload(
-            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
-        )
+        unsub = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+
+        def _cleanup_started_listener() -> None:
+            try:
+                unsub()
+            except (ValueError, KeyError):
+                pass
+
+        entry.async_on_unload(_cleanup_started_listener)
 
     return True
 
@@ -1340,9 +1357,9 @@ async def async_unload_entry(
     """Unload a config entry."""
     manager = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     unload_platforms = [Platform.SENSOR]
-    if Platform.CLIMATE in getattr(entry, "loaded_platforms", set()):
-        unload_platforms.append(Platform.CLIMATE)
-    elif manager and manager.topology and manager.topology.spaces:
+    if Platform.CLIMATE in getattr(entry, "loaded_platforms", set()) or (
+        manager and manager.topology and manager.topology.spaces
+    ):
         unload_platforms.append(Platform.CLIMATE)
 
     unload_ok = await hass.config_entries.async_unload_platforms(

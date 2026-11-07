@@ -70,11 +70,13 @@ class HvacFusionSensorBase(SensorEntity):
     def __init__(self, manager: Any) -> None:
         """Initialize the sensor."""
         self.manager = manager
-        hub_id = getattr(manager, "entry_id", None) or manager.conf.get(CONF_ID, DOMAIN)
-        hub_name = manager.conf.get(CONF_NAME, "HVAC Fusion")
+        coord_id = getattr(manager, "entry_id", None) or manager.conf.get(
+            CONF_ID, DOMAIN
+        )
+        coord_name = manager.conf.get(CONF_NAME, "HVAC Fusion")
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, hub_id)},
-            name=hub_name,
+            identifiers={(DOMAIN, coord_id)},
+            name=coord_name,
             manufacturer="HVAC Fusion",
             model="Dual Fuel Coordinator",
         )
@@ -82,6 +84,7 @@ class HvacFusionSensorBase(SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Register with coordinator manager when added."""
         self.manager.register_sensor_entity(self)
+        self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Unregister from coordinator manager when removed."""
@@ -95,13 +98,14 @@ class HvacFusionEconomicCrossoverTemperatureSensor(HvacFusionSensorBase):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
-    _attr_icon = "mdi:thermometer-auto"
 
     def __init__(self, manager: Any) -> None:
         """Initialize sensor."""
         super().__init__(manager)
-        hub_id = getattr(manager, "entry_id", None) or manager.conf.get(CONF_ID, DOMAIN)
-        self._attr_unique_id = f"{hub_id}_economic_crossover_temperature"
+        coord_id = getattr(manager, "entry_id", None) or manager.conf.get(
+            CONF_ID, DOMAIN
+        )
+        self._attr_unique_id = f"{coord_id}_economic_crossover_temperature"
         self._attr_name = "Economic crossover temperature"
 
     @property
@@ -126,13 +130,14 @@ class HvacFusionBreakEvenCopSensor(HvacFusionSensorBase):
 
     _attr_translation_key = "break_even_cop"
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:scale-balance"
 
     def __init__(self, manager: Any) -> None:
         """Initialize sensor."""
         super().__init__(manager)
-        hub_id = getattr(manager, "entry_id", None) or manager.conf.get(CONF_ID, DOMAIN)
-        self._attr_unique_id = f"{hub_id}_break_even_cop"
+        coord_id = getattr(manager, "entry_id", None) or manager.conf.get(
+            CONF_ID, DOMAIN
+        )
+        self._attr_unique_id = f"{coord_id}_break_even_cop"
         self._attr_name = "Break-even COP"
 
     @property

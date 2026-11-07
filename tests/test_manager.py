@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from homeassistant.components.climate import HVACAction
 from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
 from homeassistant.core import HomeAssistant
@@ -14,6 +13,7 @@ from hvac_crossover import (
     HvacMode as LibHvacMode,
 )
 from hvac_crossover import (
+    SharedBoilerRole,
     SpaceDirective,
 )
 
@@ -28,6 +28,7 @@ from custom_components.hvac_fusion.const import (
     CONF_PRESETS,
     CONF_PRODUCER,
     CONF_PRODUCERS,
+    CONF_SHARED_BOILER_ROLE,
     CONF_SPACES,
     CONF_TARIFFS,
     CONF_TYPE,
@@ -147,6 +148,10 @@ async def test_space_climate_state_restoration():
     ), patch.object(entity, "async_update_from_schedule") as mock_update_sched:
         await entity.async_added_to_hass()
         assert entity.preset_mode == "away"
+        assert entity.hvac_mode == "heat_cool"
+        assert entity.native_target_temperature_low == 62.0
+        assert entity.native_target_temperature_high == 78.0
+        assert entity.native_target_temperature is None
         mock_update_sched.assert_called_once()
 
     # Case 2: Restoring 'manual' mode preserves custom setpoints without schedule override
@@ -167,7 +172,9 @@ async def test_space_climate_state_restoration():
         await entity_manual.async_added_to_hass()
         assert entity_manual.preset_mode == "manual"
         assert entity_manual.hvac_mode == "heat"
-        assert entity_manual.target_temperature_low == 65.0
+        assert entity_manual.native_target_temperature == 65.0
+        assert entity_manual.native_target_temperature_low is None
+        assert entity_manual.native_target_temperature_high is None
         # Schedule update should NOT be called for manual preset
         mock_update_sched_manual.assert_not_called()
 
@@ -227,3 +234,74 @@ def test_tariffs_sensor_with_static_fallback():
     tariffs_missing = manager.get_current_tariffs()
     assert tariffs_missing.elec_cost_per_kwh == 0.25
     assert tariffs_missing.gas_cost_per_therm == 1.50
+
+
+def test_manager_build_topology_shared_boiler_roles():
+    """Verify primary and secondary shared boiler roles are parsed correctly."""
+    hass = MagicMock(spec=HomeAssistant)
+    hass.states = MagicMock()
+    hass.services = MagicMock()
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {CONF_ELECTRIC_COST_PER_KWH: 0.25, CONF_GAS_COST_PER_THERM: 1.50},
+        CONF_PRODUCERS: {
+            "alta": {CONF_TYPE: "modulating_boiler", CONF_NOMINAL_BTU: 100000.0}
+        },
+        CONF_SPACES: [
+            {
+                CONF_ID: "primary_br",
+                CONF_NAME: "Primary Bedroom",
+                CONF_SHARED_BOILER_ROLE: "primary",
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "alta",
+                        CONF_ENTITY_ID: "climate.second_floor",
+                        "zone_id": "z2",
+                    }
+                ],
+            },
+            {
+                CONF_ID: "guest_room",
+                CONF_NAME: "Guest Room",
+                CONF_SHARED_BOILER_ROLE: "secondary",
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "alta",
+                        CONF_ENTITY_ID: "climate.second_floor",
+                        "zone_id": "z2",
+                    }
+                ],
+            },
+        ],
+    }
+    manager = HvacFusionManager(hass, conf)
+    topology = manager._build_topology()
+
+    spaces = {s.id: s for s in topology.spaces}
+    assert spaces["primary_br"].shared_boiler_role == SharedBoilerRole.PRIMARY
+    assert spaces["guest_room"].shared_boiler_role == SharedBoilerRole.SECONDARY
+
+
+def test_space_climate_naming():
+    """Verify that climate entities are named with 'Space' suffix without duplication."""
+    hass = MagicMock(spec=HomeAssistant)
+    manager = MagicMock()
+    manager.hass = hass
+
+    # 1. Standard name gets 'Space' appended
+    entity1 = HvacFusionSpaceClimate(
+        manager,
+        {CONF_ID: "living_room", CONF_NAME: "Living Room", CONF_EMITTERS: []},
+    )
+    assert entity1.name == "Living Room Space"
+    assert entity1.unique_id == "hvac_fusion_living_room_space"
+
+    # 2. Name already ending with 'space' does not get duplicate suffix
+    entity2 = HvacFusionSpaceClimate(
+        manager,
+        {CONF_ID: "office_space", CONF_NAME: "Office Space", CONF_EMITTERS: []},
+    )
+    assert entity2.name == "Office Space"
+    assert entity2.unique_id == "hvac_fusion_office_space_space"

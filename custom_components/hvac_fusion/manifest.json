@@ -4,13 +4,15 @@
   "documentation": "https://github.com/dlarrick/hvac-fusion",
   "dependencies": [],
   "requirements": [
-    "hvac-crossover==0.1.5"
+    "hvac-crossover==0.1.6"
   ],
   "codeowners": [
     "@dlarrick"
   ],
   "config_flow": true,
+  "single_config_entry": true,
   "version": "0.1.2",
-  "integration_type": "hub",
+  "homeassistant": "2026.11.0",
+  "integration_type": "service",
   "iot_class": "local_polling"
 }
