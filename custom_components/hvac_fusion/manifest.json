@@ -4,7 +4,7 @@
   "documentation": "https://github.com/dlarrick/hvac-fusion",
   "dependencies": [],
   "requirements": [
-    "hvac-crossover==0.1.6"
+    "hvac-crossover==0.1.7"
   ],
   "codeowners": [
     "@dlarrick"

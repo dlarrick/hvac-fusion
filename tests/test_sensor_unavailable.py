@@ -10,9 +10,6 @@ inside RecoveryEngine.is_space_in_recovery -> ComfortRange.heat_deficit.
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
-from homeassistant.core import HomeAssistant
-
 from custom_components.hvac_fusion import HvacFusionManager
 from custom_components.hvac_fusion.const import (
     CONF_ELECTRIC_COST_PER_KWH,
@@ -27,6 +24,8 @@ from custom_components.hvac_fusion.const import (
     CONF_TEMP_SENSOR,
     CONF_TYPE,
 )
+from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
+from homeassistant.core import HomeAssistant
 
 
 def _make_conf():

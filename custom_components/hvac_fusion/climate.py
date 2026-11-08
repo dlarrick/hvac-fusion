@@ -27,6 +27,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+
 from hvac_crossover import Diagnostics, HvacAction, SpaceDirective
 
 from .const import (
@@ -126,8 +127,6 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
 
         self._active_delivery_units: list[str] = []
         self._active_producer: str | None = None
-        self._economic_crossover: float | None = None
-        self._system_phase: str | None = None
         self._plan_explanation: str | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -256,21 +255,47 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             for e_id in self._active_delivery_units
             if e_id in getattr(self._manager, "_cycling_state", {})
         ]
-        attrs = {
+        in_recovery = False
+        if (
+            self._manager
+            and hasattr(self._manager, "coordinator")
+            and self._manager.coordinator
+        ):
+            curr_temp = self._manager.get_space_current_temp(self._space_conf)
+            heat_to, _ = self.get_comfort_bounds()
+            if isinstance(curr_temp, (int, float)) and isinstance(
+                heat_to, (int, float)
+            ):
+                deficit = heat_to - curr_temp
+                config = getattr(self._manager.coordinator, "config", None)
+                thresh = getattr(config, "recovery_delta_threshold_f", 2.0)
+                if isinstance(thresh, (int, float)):
+                    in_recovery = deficit >= thresh
+
+        window_open = (
+            self._manager.get_space_window_open(self._space_conf)
+            if self._manager
+            else False
+        )
+        if window_open:
+            phase = "passive_ventilation"
+        elif in_recovery:
+            phase = "setback_recovery"
+        else:
+            phase = "plateau_maintenance"
+
+        return {
             "space_id": self._space_id,
             "preset_mode": self._attr_preset_mode,
             "active_schedule": self.active_schedule_entity,
             "active_delivery_units": self._active_delivery_units,
             "cycling_emitters": cycling_emitters,
             "active_producer": self._active_producer,
-            "control_enabled": self._manager.control_enabled,
-            "dry_run": not self._manager.control_enabled,
-            "economic_crossover_temp": self._economic_crossover,
-            "system_phase": self._system_phase,
-            "window_open": self._manager.get_space_window_open(self._space_conf),
+            "window_open": window_open,
+            "phase": phase,
+            "in_recovery": in_recovery,
             "explanation": self._plan_explanation,
         }
-        return attrs
 
     def get_comfort_bounds(self) -> tuple[float | None, float | None]:
         """Returns (heat_to, cool_to) according to current mode and setpoints."""
@@ -358,14 +383,6 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         self._active_delivery_units = directive.active_delivery_unit_ids
         self._active_producer = directive.active_producer_id
         self._plan_explanation = directive.explanation
-
-        if diagnostics:
-            self._economic_crossover = diagnostics.economic_crossover_temp
-            self._system_phase = (
-                diagnostics.system_phase.value
-                if hasattr(diagnostics.system_phase, "value")
-                else str(diagnostics.system_phase)
-            )
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Handle preset selection."""

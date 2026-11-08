@@ -3,11 +3,6 @@
 from unittest.mock import patch
 
 import pytest
-from homeassistant import config_entries, data_entry_flow
-from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
-from homeassistant.core import HomeAssistant
-from pytest_homeassistant.common import MockConfigEntry
-
 from custom_components.hvac_fusion.const import (
     CONF_CEILING_HEIGHT,
     CONF_CONTROL_ENABLED,
@@ -41,6 +36,10 @@ from custom_components.hvac_fusion.const import (
     CONF_ZONE_ID,
     DOMAIN,
 )
+from homeassistant import config_entries, data_entry_flow
+from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant.common import MockConfigEntry
 
 
 @pytest.mark.asyncio
@@ -417,7 +416,8 @@ async def test_options_flow_producers_crud(hass: HomeAssistant) -> None:
             CONF_ID: "hp_test",
             CONF_NAME: "Test Heat Pump",
             CONF_TYPE: "heat_pump",
-            "heat_pump_profile": "mitsubishi/mxz_3c30nahz2.json",
+            "heat_pump_profile": "mitsubishi/mxz_xcxxnahz2.json",
+            CONF_NOMINAL_BTU: 36000.0,
         },
     )
     assert result["step_id"] == "producers_menu"
@@ -427,6 +427,12 @@ async def test_options_flow_producers_crud(hass: HomeAssistant) -> None:
         result["flow_id"], {"producer_action": "hp_test"}
     )
     assert result["step_id"] == "producer_edit"
+    nom_field = next(
+        k
+        for k in result["data_schema"].schema
+        if getattr(k, "schema", None) == CONF_NOMINAL_BTU
+    )
+    assert nom_field.default() == 36000.0
 
     # Update name
     result = await hass.config_entries.options.async_configure(
@@ -434,7 +440,7 @@ async def test_options_flow_producers_crud(hass: HomeAssistant) -> None:
         {
             CONF_NAME: "Updated Heat Pump",
             CONF_TYPE: "heat_pump",
-            "heat_pump_profile": "mitsubishi/mxz_3c30nahz2.json",
+            "heat_pump_profile": "mitsubishi/mxz_xcxxnahz2.json",
         },
     )
     assert result["step_id"] == "producers_menu"
@@ -450,7 +456,7 @@ async def test_options_flow_producers_crud(hass: HomeAssistant) -> None:
         {
             CONF_NAME: "Updated Heat Pump",
             CONF_TYPE: "heat_pump",
-            "heat_pump_profile": "mitsubishi/mxz_3c30nahz2.json",
+            "heat_pump_profile": "mitsubishi/mxz_xcxxnahz2.json",
             "delete_producer": True,
         },
     )
@@ -482,7 +488,7 @@ async def test_options_flow_spaces_and_emitters(hass: HomeAssistant) -> None:
                 "hp1": {
                     CONF_NAME: "Heat Pump 1",
                     CONF_TYPE: "inverter_heat_pump",
-                    CONF_PROFILE: "mitsubishi/mxz_3c30nahz2.json",
+                    CONF_PROFILE: "mitsubishi/mxz_xcxxnahz2.json",
                 }
             },
             CONF_SPACES: [],
@@ -944,8 +950,8 @@ async def test_options_flow_conditional_producer_and_emitter_fields(
         {
             CONF_ID: "boiler1",
             CONF_NAME: "Main Boiler",
-            CONF_TYPE: "boiler",
-            "boiler_profile": "none",
+            CONF_TYPE: "modulating_boiler",
+            "modulating_boiler_profile": "none",
             CONF_FUEL_TYPE: "propane",
         },
     )
@@ -1090,10 +1096,12 @@ async def test_options_flow_producer_add_auto_slug_and_profile_lists(
     assert hp_profile_key.default() == "generic/cold_climate_heat_pump.json"
 
     # Check boiler profile visibility and default
-    boiler_profile_key = next(k for k in schema if str(k) == "boiler_profile")
+    boiler_profile_key = next(
+        k for k in schema if str(k) == "modulating_boiler_profile"
+    )
     assert boiler_profile_key.visible == {
         "field": CONF_TYPE,
-        "value": "boiler",
+        "value": "modulating_boiler",
     }
     assert boiler_profile_key.default() == "generic/modulating_condensing_boiler.json"
 
@@ -1131,8 +1139,8 @@ async def test_options_flow_producer_add_auto_slug_and_profile_lists(
         {
             CONF_ID: "custom_boiler",
             CONF_NAME: "Basement Boiler",
-            CONF_TYPE: "boiler",
-            "boiler_profile": "generic/modulating_condensing_boiler.json",
+            CONF_TYPE: "modulating_boiler",
+            "modulating_boiler_profile": "generic/modulating_condensing_boiler.json",
             CONF_FUEL_TYPE: "natural_gas",
         },
     )
