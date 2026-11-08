@@ -5,7 +5,7 @@ from homeassistant.const import (
     CONF_NAME,
 )
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.hvac_fusion import (
     DOMAIN,
@@ -33,14 +33,14 @@ from custom_components.hvac_fusion.sensor import (
 async def test_sensors_without_producers(hass: HomeAssistant) -> None:
     """Test sensors report None when no producers are configured."""
     conf = {
-        CONF_NAME: "HVAC Fusion Hub",
+        CONF_NAME: "HVAC Fusion Coordinator",
         CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temperature",
         CONF_TARIFFS: {
             CONF_ELECTRIC_COST_PER_KWH: 0.25,
             CONF_GAS_COST_PER_THERM: 1.80,
         },
     }
-    manager = HvacFusionManager(hass, conf, entry_id="test_hub")
+    manager = HvacFusionManager(hass, conf, entry_id="test_coordinator")
     await manager.async_init()
 
     xover_sensor = HvacFusionEconomicCrossoverTemperatureSensor(manager)
@@ -74,7 +74,7 @@ async def test_sensors_with_gas_boiler_and_heat_pump(hass: HomeAssistant) -> Non
             },
         },
     }
-    manager = HvacFusionManager(hass, conf, entry_id="test_hub")
+    manager = HvacFusionManager(hass, conf, entry_id="test_coordinator")
     await manager.async_init()
 
     xover_sensor = HvacFusionEconomicCrossoverTemperatureSensor(manager)
@@ -162,3 +162,112 @@ async def test_sensor_setup_entry_and_unload(hass: HomeAssistant) -> None:
 
     # Check manager popped
     assert entry.entry_id not in hass.data.get(DOMAIN, {})
+
+
+@pytest.mark.asyncio
+async def test_sensor_immediate_update_on_options_flow_reload(
+    hass: HomeAssistant,
+) -> None:
+    """Test that sensors update immediately after options flow adds producers and tariffs."""
+    hass.states.async_set("sensor.outdoor_temp", "35.0")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="HVAC Fusion",
+        data={
+            CONF_NAME: "HVAC Fusion",
+            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+            CONF_TARIFFS: {},
+            CONF_PRODUCERS: {},
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Initially unknown because no producers or tariffs configured
+    xover_state = hass.states.get("sensor.hvac_fusion_economic_crossover_temperature")
+    cop_state = hass.states.get("sensor.hvac_fusion_break_even_cop")
+    assert xover_state is not None
+    assert xover_state.state == "unknown"
+    assert cop_state is not None
+    assert cop_state.state == "unknown"
+
+    # Start options flow and add Heat Pump
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "producers_menu"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"producer_action": "add"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Living Room Mini-Split",
+            CONF_TYPE: "heat_pump",
+            "heat_pump_profile": "generic/cold_climate_heat_pump.json",
+        },
+    )
+
+    # Add Boiler
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"producer_action": "add"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Basement Boiler",
+            CONF_TYPE: "boiler",
+            "boiler_profile": "generic/modulating_condensing_boiler.json",
+            CONF_FUEL_TYPE: "natural_gas",
+        },
+    )
+
+    # Return to menu and go to Policies/Tariffs
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"producer_action": "back"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "policies_menu"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "electricity_section": {
+                CONF_ELECTRIC_COST_PER_KWH: 0.25077,
+            },
+            "gas_section": {
+                CONF_GAS_COST_PER_THERM: 1.50,
+            },
+            "limits_section": {
+                "heat_pump_safety_band_f": 5.0,
+            },
+            "policies_section": {
+                "control_enabled": False,
+                "cycling_band_deg": 2.0,
+                "evaluation_interval_minutes": 15,
+            },
+        },
+    )
+
+    # Finish options flow
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "finish"}
+    )
+    await hass.async_block_till_done()
+
+    # Verify sensors updated IMMEDIATELY without waiting for periodic timer
+    xover_state = hass.states.get("sensor.hvac_fusion_economic_crossover_temperature")
+    cop_state = hass.states.get("sensor.hvac_fusion_break_even_cop")
+
+    assert xover_state is not None
+    assert xover_state.state != "unknown"
+    xover_val = float(xover_state.state)
+    assert 10.0 <= xover_val <= 60.0
+
+    assert cop_state is not None
+    assert cop_state.state != "unknown"
+    cop_val = float(cop_state.state)
+    assert 1.0 <= cop_val <= 10.0

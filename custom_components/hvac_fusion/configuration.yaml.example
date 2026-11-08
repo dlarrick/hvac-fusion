@@ -73,7 +73,7 @@ hvac_fusion:
       temp_sensor: climate.master_br
       window_sensor: binary_sensor.bedroom_window
       priority: 10
-      shared_boiler_role: master
+      shared_boiler_role: primary
       floor_area_sqft: 250
       presets:
         occupied: schedule.primary_br_occupied
@@ -94,7 +94,7 @@ hvac_fusion:
       unique_id: "climate_guest_room_fusion"
       temp_sensor: climate.2nd_floor_guest_room_climate
       priority: 5
-      shared_boiler_role: slave
+      shared_boiler_role: secondary
       floor_area_sqft: 200
       emitters:
         - type: mini_split

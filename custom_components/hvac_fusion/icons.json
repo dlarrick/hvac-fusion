@@ -1,0 +1,12 @@
+{
+  "entity": {
+    "sensor": {
+      "economic_crossover_temperature": {
+        "default": "mdi:thermometer-auto"
+      },
+      "break_even_cop": {
+        "default": "mdi:scale-balance"
+      }
+    }
+  }
+}

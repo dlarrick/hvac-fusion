@@ -3,24 +3,353 @@
     "step": {
       "user": {
         "title": "HVAC Fusion Setup",
-        "description": "Configure the HVAC Fusion coordinator hub. You can register equipment and spaces after setup via Configure.",
+        "description": "Configure the HVAC Fusion coordinator. You can register equipment, spaces, and tariffs after setup via Configure.",
         "data": {
           "name": "Coordinator Name",
           "outdoor_temperature_entity": "Outdoor Temperature Sensor",
-          "electric_cost_per_kwh": "Electricity Rate ($/kWh)",
-          "gas_cost_per_therm": "Natural Gas Rate ($/therm)",
-          "propane_cost_per_gal": "Propane Rate ($/gal)",
-          "control_enabled": "Enable Physical Control (Uncheck for Dry-Run / Monitoring mode)"
+          "solar_export_entity": "Solar Export Sensor (Optional)",
+          "control_enabled": "Enable Physical Control (Uncheck for Dry-Run mode)"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "producer_id_exists": "A producer with this ID already exists",
+      "space_id_exists": "A space with this ID already exists",
+      "no_producers": "Please add at least one producer first before configuring emitters"
     },
     "abort": {
-      "already_configured": "Coordinator hub is already configured"
+      "already_configured": "Coordinator is already configured",
+      "single_instance_allowed": "Only a single configuration of HVAC Fusion is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HVAC Fusion Options",
+        "description": "Select a configuration section to manage.",
+        "menu_options": {
+          "global_settings": "Environmental Sensors (Weather & Solar)",
+          "producers_menu": "Manage Producers (Heat Pumps & Boilers)",
+          "spaces_menu": "Manage Spaces (Rooms & Zones)",
+          "policies_menu": "Tariffs, Safety Limits & Operational Policies",
+          "finish": "Save & Exit"
+        }
+      },
+      "global_settings": {
+        "title": "Environmental Sensors",
+        "description": "Configure outdoor weather sensor and solar generation export sensor.",
+        "data": {
+          "outdoor_temperature_entity": "Outdoor Temperature Sensor",
+          "solar_export_entity": "Solar Export Sensor (Optional)"
+        }
+      },
+      "policies_menu": {
+        "title": "Tariffs, Limits & Operational Policies",
+        "description": "Configure energy tariffs, operating safety bands, and coordinator policies.",
+        "sections": {
+          "electricity_section": {
+            "name": "Electricity Tariff",
+            "description": "Current electric rate ($/kWh) or dynamic rate sensor entity.",
+            "data": {
+              "electric_cost_per_kwh": "Electricity Rate ($/kWh)",
+              "electric_rate_sensor": "Electricity Rate Sensor (Optional)"
+            }
+          },
+          "gas_section": {
+            "name": "Natural Gas Tariff",
+            "description": "Current gas rate ($/therm) or dynamic rate sensor entity.",
+            "data": {
+              "gas_cost_per_therm": "Natural Gas Rate ($/therm)",
+              "gas_rate_sensor": "Natural Gas Rate Sensor (Optional)"
+            }
+          },
+          "propane_section": {
+            "name": "Propane Tariff",
+            "description": "Contracted or replacement rate ($/gal) or dynamic rate sensor entity.",
+            "data": {
+              "propane_cost_per_gal": "Propane Rate ($/gal)",
+              "propane_rate_sensor": "Propane Rate Sensor (Optional)"
+            }
+          },
+          "limits_section": {
+            "name": "Operating Limits",
+            "description": "Low ambient safety thresholds for heat pump operation.",
+            "data": {
+              "heat_pump_safety_band_f": "Heat Pump Low Ambient Safety Band (°F)"
+            }
+          },
+          "policies_section": {
+            "name": "Operational Policies",
+            "description": "Coordinator execution frequency, cycling hysteresis band, and control actuation.",
+            "data": {
+              "control_enabled": "Enable Physical Control (Uncheck for Dry-Run mode)",
+              "cycling_band_deg": "Setpoint Cycling Band (°F)",
+              "evaluation_interval_minutes": "Evaluation Interval (minutes)"
+            }
+          }
+        },
+        "data": {
+          "electric_cost_per_kwh": "Electricity Rate ($/kWh)",
+          "electric_rate_sensor": "Electricity Rate Sensor (Optional)",
+          "gas_cost_per_therm": "Natural Gas Rate ($/therm)",
+          "gas_rate_sensor": "Natural Gas Rate Sensor (Optional)",
+          "propane_cost_per_gal": "Propane Rate ($/gal)",
+          "propane_rate_sensor": "Propane Rate Sensor (Optional)",
+          "heat_pump_safety_band_f": "Heat Pump Low Ambient Safety Band (°F)",
+          "control_enabled": "Enable Physical Control (Uncheck for Dry-Run mode)",
+          "cycling_band_deg": "Setpoint Cycling Band (°F)",
+          "evaluation_interval_minutes": "Evaluation Interval (minutes)"
+        }
+      },
+      "producers_menu": {
+        "title": "Manage Producers",
+        "description": "Add, edit, or delete heat pumps and boilers.",
+        "data": {
+          "producer_action": "Action or Producer to Manage"
+        }
+      },
+      "producer_add": {
+        "title": "Add Producer",
+        "description": "Configure heat source equipment specifications. Note: Energy and fuel tariffs ($/kWh, $/therm, $/gal) are configured separately under Policies & Tariffs.",
+        "data": {
+          "name": "Display Name",
+          "id": "Producer ID (Optional slug, auto-generated from Name)",
+          "type": "Producer Type",
+          "heat_pump_profile": "Equipment Profile",
+          "boiler_profile": "Equipment Profile",
+          "profile": "Equipment Profile",
+          "fuel_type": "Fuel Type",
+          "cancel": "Cancel Add"
+        },
+        "data_description": {
+          "fuel_type": "Fuel tariffs ($/therm or $/gal) are configured separately under Policies & Tariffs.",
+          "cancel": "Discard input and return to the producers menu without creating a new producer."
+        }
+      },
+      "producer_manage": {
+        "title": "Manage Producer: {producer_name}",
+        "description": "Choose an action for this producer.",
+        "data": {
+          "action": "Action"
+        }
+      },
+      "producer_edit": {
+        "title": "Edit Producer: {producer_name}",
+        "description": "Update equipment specifications. Note: Energy and fuel tariffs ($/kWh, $/therm, $/gal) are configured separately under Policies & Tariffs.",
+        "data": {
+          "name": "Display Name",
+          "type": "Producer Type",
+          "heat_pump_profile": "Equipment Profile",
+          "boiler_profile": "Equipment Profile",
+          "profile": "Equipment Profile",
+          "fuel_type": "Fuel Type",
+          "cancel": "Cancel Edit",
+          "delete_producer": "Delete this producer"
+        },
+        "data_description": {
+          "fuel_type": "Fuel tariffs ($/therm or $/gal) are configured separately under Policies & Tariffs.",
+          "cancel": "Discard unsaved changes and return to the producers menu."
+        }
+      },
+      "producer_delete": {
+        "title": "Delete Producer: {producer_name}",
+        "description": "Are you sure you want to remove this producer?",
+        "data": {
+          "confirm": "Confirm Deletion"
+        }
+      },
+      "spaces_menu": {
+        "title": "Manage Spaces",
+        "description": "Add, edit, or delete managed living spaces.",
+        "data": {
+          "space_action": "Action or Space to Manage"
+        }
+      },
+      "space_add": {
+        "title": "Add Space",
+        "description": "Configure a room or thermal zone. Spaces can have heating/cooling emitters and schedules.",
+        "data": {
+          "name": "Space Name",
+          "id": "Space ID (Optional slug, auto-generated from Name)",
+          "temp_sensor": "Room Temperature Sensor",
+          "floor_area_sqft": "Floor Area (sq ft)",
+          "ceiling_height_ft": "Ceiling Height (ft)",
+          "priority": "Arbitration Priority (1-10)",
+          "window_sensor": "Window / Door Sensor (Optional)",
+          "shared_boiler_role": "Shared Boiler Role",
+          "configure_primary_emitter": "Configure primary emitter now",
+          "emitter_type": "Emitter Type",
+          "hp_emitter_producer": "Bound Heat Pump Producer",
+          "boiler_emitter_producer": "Bound Boiler Producer",
+          "emitter_entity_id": "Physical Actuation Entity (climate or switch)",
+          "emitter_nominal_btu": "Nominal Heat Pump Head Capacity (BTU)",
+          "emitter_zone_id": "Hydronic Zone Identifier (e.g. z1)",
+          "cancel": "Cancel Add"
+        },
+        "data_description": {
+          "id": "Unique identifier for this space. Leave blank to auto-generate from the space name.",
+          "priority": "Determines arbitration winner when multiple mini-split indoor heads sharing one outdoor unit request conflicting modes (heating vs. cooling). Higher numbers win (e.g. Priority 6 beats Priority 2).",
+          "shared_boiler_role": "Select 'Independent' if this space has its own dedicated zone valve/thermostat. If multiple spaces share a single hydronic heating loop, set the space with the controlling wall thermostat to 'Primary', and spaces without thermostats to 'Secondary' (they receive passive heat when primary calls).",
+          "window_sensor": "Optional binary sensor (door or window). When open, HVAC for this space will be paused.",
+          "configure_primary_emitter": "Optionally attach the space's main heating or cooling emitter right away. You can add additional emitters or schedule presets anytime later from the space management menu.",
+          "hp_emitter_producer": "The outdoor multi-split heat pump unit powering this indoor head.",
+          "boiler_emitter_producer": "The central boiler powering this hydronic zone.",
+          "cancel": "Discard input and return to the spaces menu without creating a new space."
+        }
+      },
+      "space_manage": {
+        "title": "Manage Space: {space_name}",
+        "description": "Choose an action for this space.",
+        "data": {
+          "action": "Action"
+        }
+      },
+      "space_edit": {
+        "title": "Edit Space: {space_name}",
+        "description": "Update settings for this space.",
+        "data": {
+          "name": "Space Name",
+          "temp_sensor": "Room Temperature Sensor",
+          "floor_area_sqft": "Floor Area (sq ft)",
+          "ceiling_height_ft": "Ceiling Height (ft)",
+          "priority": "Arbitration Priority (1-10)",
+          "window_sensor": "Window / Door Sensor (Optional)",
+          "shared_boiler_role": "Shared Boiler Role",
+          "cancel": "Cancel Edit",
+          "delete_space": "Delete this space (including its emitters and presets)"
+        },
+        "data_description": {
+          "priority": "Determines arbitration winner when multiple mini-split indoor heads sharing one outdoor unit request conflicting modes (heating vs. cooling). Higher numbers win (e.g. Priority 6 beats Priority 2).",
+          "shared_boiler_role": "Select 'Independent' if this space has its own dedicated zone valve/thermostat. If multiple spaces share a single hydronic heating loop, set the space with the controlling wall thermostat to 'Primary', and spaces without thermostats to 'Secondary' (they receive passive heat when primary calls).",
+          "window_sensor": "Optional binary sensor (door or window). When open, HVAC for this space will be paused.",
+          "cancel": "Discard unsaved changes and return to the space management menu."
+        }
+      },
+      "space_delete": {
+        "title": "Delete Space: {space_name}",
+        "description": "Are you sure you want to remove this space?",
+        "data": {
+          "confirm": "Confirm Deletion"
+        }
+      },
+      "presets_menu": {
+        "title": "Manage Schedule Presets: {space_name}",
+        "description": "Add, edit, or delete schedule-backed presets for this space.",
+        "data": {
+          "preset_action": "Action or Preset to Manage"
+        }
+      },
+      "preset_manage": {
+        "title": "Manage Preset: {preset_name}",
+        "description": "Choose an action for this preset.",
+        "data": {
+          "action": "Action"
+        }
+      },
+      "preset_add": {
+        "title": "Add Schedule Preset to {space_name}",
+        "description": "Select a schedule entity. The preset name will automatically match the schedule, or you can provide a custom name.",
+        "data": {
+          "schedule_entity": "Schedule Entity",
+          "custom_name_toggle": "Customize preset name (defaults to schedule name)",
+          "preset_name": "Custom Preset Name",
+          "cancel": "Cancel Add"
+        },
+        "data_description": {
+          "cancel": "Discard input and return to the schedule presets menu without adding a preset."
+        }
+      },
+      "preset_edit": {
+        "title": "Edit Preset: {preset_name}",
+        "description": "Update the schedule entity or preset name.",
+        "data": {
+          "schedule_entity": "Schedule Entity",
+          "preset_name": "Custom Preset Name",
+          "cancel": "Cancel Edit",
+          "delete_preset": "Delete this schedule preset"
+        },
+        "data_description": {
+          "cancel": "Discard unsaved changes and return to the schedule presets menu."
+        }
+      },
+      "preset_delete": {
+        "title": "Delete Preset: {preset_name}",
+        "description": "Are you sure you want to remove this schedule preset?",
+        "data": {
+          "confirm": "Confirm Deletion"
+        }
+      },
+      "emitters_menu": {
+        "title": "Manage Emitters: {space_name}",
+        "description": "Add, edit, or delete emitters attached to this space.",
+        "data": {
+          "emitter_action": "Action or Emitter to Manage"
+        }
+      },
+      "emitter_add": {
+        "title": "Add Emitter to {space_name}",
+        "description": "Configure physical delivery unit.",
+        "data": {
+          "type": "Emitter Type",
+          "producer": "Bound Producer",
+          "hp_emitter_producer": "Bound Heat Pump Producer",
+          "boiler_emitter_producer": "Bound Boiler Producer",
+          "entity_id": "Physical Actuation Entity (climate or switch)",
+          "offset": "Target Setpoint Offset (°F)",
+          "nominal_btu": "Nominal BTU (for Mini-Split)",
+          "zone_id": "Zone ID (for Hydronic)",
+          "cancel": "Cancel Add"
+        },
+        "data_description": {
+          "cancel": "Discard input and return to the emitters menu without adding an emitter."
+        }
+      },
+      "emitter_manage": {
+        "title": "Manage Emitter",
+        "description": "Choose an action for this emitter.",
+        "data": {
+          "action": "Action"
+        }
+      },
+      "emitter_edit": {
+        "title": "Edit Emitter",
+        "description": "Update emitter settings.",
+        "data": {
+          "type": "Emitter Type",
+          "producer": "Bound Producer",
+          "hp_emitter_producer": "Bound Heat Pump Producer",
+          "boiler_emitter_producer": "Bound Boiler Producer",
+          "entity_id": "Physical Actuation Entity (climate or switch)",
+          "offset": "Target Setpoint Offset (°F)",
+          "nominal_btu": "Nominal BTU (for Mini-Split)",
+          "zone_id": "Zone ID (for Hydronic)",
+          "cancel": "Cancel Edit",
+          "delete_emitter": "Delete this emitter"
+        },
+        "data_description": {
+          "cancel": "Discard unsaved changes and return to the emitters menu."
+        }
+      },
+      "emitter_delete": {
+        "title": "Delete Emitter",
+        "description": "Are you sure you want to remove this emitter?",
+        "data": {
+          "confirm": "Confirm Deletion"
+        }
+      }
+    },
+    "error": {
+      "name_required": "Name is required to add. (Or toggle 'Cancel Add' below to exit).",
+      "temp_sensor_required": "Temperature sensor is required to add space. (Or toggle 'Cancel Add' below to exit).",
+      "entity_required": "Physical actuation entity is required to add emitter. (Or toggle 'Cancel Add' below to exit).",
+      "schedule_required": "Schedule entity is required. (Or toggle 'Cancel Add' below to exit).",
+      "producer_id_exists": "A producer with this ID already exists",
+      "space_id_exists": "A space with this ID already exists",
+      "preset_exists": "A preset with this name already exists for this space",
+      "no_producers": "Please add at least one producer first before configuring emitters"
     }
   },
   "entity": {
