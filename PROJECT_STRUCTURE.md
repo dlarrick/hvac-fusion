@@ -8,6 +8,7 @@
 
 ```text
 hvac-fusion/
+├── CONFIGURATION.md              # Full UI Configuration Reference (Config & Options Flow)
 ├── custom_components/
 │   └── hvac_fusion/                # Main Home Assistant integration package
 │       ├── brand/                  # Brand assets (icon.png, logo.png, @2x versions)
@@ -20,7 +21,6 @@ hvac-fusion/
 │       ├── sensor.py               # Diagnostic sensors (crossover temperature, COP*)
 │       ├── services.yaml           # Service definitions
 │       ├── strings.json            # UI translation source
-│       ├── configuration.yaml.example # Reference YAML configuration
 │       └── translations/
 │           └── en.json             # English UI translation strings (mirrors strings.json)
 ├── tests/                          # Integration test suite (pytest-homeassistant-custom-component)
@@ -52,18 +52,24 @@ Each living space configured in HVAC Fusion is exposed as a virtual `climate` en
 * Supports `HEAT_COOL`, `HEAT`, `COOL`, and `OFF`.
 * Maps preset modes to Home Assistant `schedule` entities or manual overrides.
 * Restores active preset modes and target temperature setpoints across Home Assistant restarts (`RestoreEntity`).
-* Exposes rich diagnostic state attributes (`active_producer`, `active_delivery_units`, `cycling_emitters`, `economic_crossover_temp`, `system_phase`, `explanation`).
+* Exposes clean room-level state attributes (`space_id`, `preset_mode`, `active_producer`, `active_delivery_units`, `cycling_emitters`, `phase`, `in_recovery`, `window_open`, `explanation`).
 
-### C. Options Flow & UI Configuration (`config_flow.py`)
+### C. Advisory & Producer Entities (`sensor.py`)
+* **Economic Crossover Temperature Sensor:** System-level break-even temperature between heat pump and auxiliary heating, with `break_even_cop`, `heat_pump`, `auxiliary_producer`, `system_phase`, and `control_enabled` attributes.
+* **Producer Status Sensors:** Dedicated operational state sensor (`idle`, `heating`, `cooling`, `locked_out`) for every energy producer, exposing equipment-level telemetry:
+  * Heat Pumps: Real-time `current_cop`, `capacity_derate_pct`, `mode_lock`, `nominal_capacity_btu`, `active_spaces`, and `safety_lockout`.
+  * Boilers & Furnaces: `fuel_type`, `nominal_capacity_btu`, `rated_afue`, `estimated_return_temp_f`, `estimated_efficiency`, `condensing_state`, and `active_spaces`.
+
+### D. Options Flow & UI Configuration (`config_flow.py`)
 Allows full UI-based setup and ongoing reconfiguration via Home Assistant Settings:
 * **Initial Setup (Config Flow):** Captures coordinator name, outdoor temperature sensor, optional solar export sensor, and physical control toggle (dry-run mode).
 * **Options Flow (4-Menu Configuration Hub):**
   1. **Environmental Sensors:** Outdoor temperature sensor entity and optional solar export sensor entity.
-  2. **Producers Hub:** Add, edit, or delete heating/cooling equipment (heat pumps and boilers). Profiles are scanned dynamically with make/model metadata, and forms take advantage of HA 2026.11 conditional visibility to tailor fields by equipment type.
+  2. **Producers Hub:** Add, edit, or delete heating/cooling equipment (heat pumps, modulating boilers, atmospheric boilers, steam boilers, furnaces). Configures equipment nominal capacity (BTU), selects generalized profiles (or manual), and applies conditional visibility for fuel types and ODR settings.
   3. **Spaces & Emitters Hub:** Add, edit, or delete living spaces with room temperature sensors, floor area, ceiling height, arbitration priority (1–10), window/door binary sensors, and shared boiler roles (`independent`, `primary`, `secondary`). Includes nested sub-flows for:
-     * **Emitters:** Attach mini-split heads or hydronic zones to producers and physical actuation entities (`climate` or `switch`), with setpoint offsets and capacity/zone IDs.
+     * **Emitters:** Attach mini-split heads, hydronic loops, or furnace registers to producers and physical actuation entities (`climate` or `switch`), with setpoint offsets, hydronic emitter characteristics, and mini-split head ratings.
      * **Schedule Presets:** Add or edit space preset modes linked directly to Home Assistant `schedule` entities.
-  4. **Tariffs, Safety Limits & Operational Policies:** Grouped into visual sections for electric, gas, and propane tariffs (with live sensor/helper support and static fallbacks), heat pump low-ambient safety band, physical control toggle (dry-run mode), setpoint cycling band, and evaluation interval.
+  4. **Tariffs, Safety Limits & Operational Policies:** Grouped into visual sections for electric, gas, propane, and oil tariffs (with live sensor/helper support and static fallbacks), heat pump low-ambient safety band, physical control toggle (dry-run mode), setpoint cycling band, and evaluation interval.
 
 ---
 

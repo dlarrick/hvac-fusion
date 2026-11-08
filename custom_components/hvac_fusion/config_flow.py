@@ -28,9 +28,13 @@ from .const import (
     CONF_FUEL_TYPE,
     CONF_GAS_COST_PER_THERM,
     CONF_GAS_RATE_SENSOR,
+    CONF_HAS_OUTDOOR_RESET,
     CONF_HEAT_PUMP_SAFETY_BAND_F,
+    CONF_HYDRONIC_TYPE,
     CONF_NOMINAL_BTU,
     CONF_OFFSET,
+    CONF_OIL_COST_PER_GAL,
+    CONF_OIL_RATE_SENSOR,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
     CONF_PRESETS,
     CONF_PRIORITY,
@@ -77,9 +81,17 @@ def _scan_profiles_sync() -> list[dict[str, Any]]:
                             with open(full_path, encoding="utf-8") as fp:
                                 data = json.load(fp)
                             raw_type = data.get("producer_type", "")
-                            category = (
-                                "heat_pump" if "heat_pump" in raw_type else "boiler"
-                            )
+                            if "heat_pump" in raw_type:
+                                category = "heat_pump"
+                            elif raw_type in (
+                                "modulating_boiler",
+                                "atmospheric_boiler",
+                                "steam_boiler",
+                                "furnace",
+                            ):
+                                category = raw_type
+                            else:
+                                category = "boiler"
                             make = data.get("make")
                             model = data.get("model")
                             series = data.get("series")
@@ -87,6 +99,7 @@ def _scan_profiles_sync() -> list[dict[str, Any]]:
                                 "nominal_cooling_btu"
                             )
                             fuel = data.get("fuel_type")
+                            turndown = data.get("turndown_ratio")
 
                             parts = []
                             if make:
@@ -100,6 +113,8 @@ def _scan_profiles_sync() -> list[dict[str, Any]]:
                             extra_info = []
                             if fuel:
                                 extra_info.append(fuel.replace("_", " ").title())
+                            if turndown:
+                                extra_info.append(f"{turndown}:1 Turndown")
                             if btu:
                                 extra_info.append(
                                     f"{int(btu) // 1000}k BTU"
@@ -142,11 +157,44 @@ def _filter_profiles(
         ]
         res.append({"value": "none", "label": "None / Custom Heat Pump"})
         return res
+    if category == "modulating_boiler":
+        res = [
+            {"value": p["value"], "label": p["label"]}
+            for p in raw_profiles
+            if p.get("category") in ("modulating_boiler", "boiler")
+        ]
+        res.append({"value": "none", "label": "None / Custom Mod-Con Boiler"})
+        return res
+    if category == "atmospheric_boiler":
+        res = [
+            {"value": p["value"], "label": p["label"]}
+            for p in raw_profiles
+            if p.get("category") == "atmospheric_boiler"
+        ]
+        res.append({"value": "none", "label": "None / Custom Atmospheric Boiler"})
+        return res
+    if category == "steam_boiler":
+        res = [
+            {"value": p["value"], "label": p["label"]}
+            for p in raw_profiles
+            if p.get("category") in ("steam_boiler", "atmospheric_boiler")
+        ]
+        res.append({"value": "none", "label": "None / Custom Steam Boiler"})
+        return res
+    if category == "furnace":
+        res = [
+            {"value": p["value"], "label": p["label"]}
+            for p in raw_profiles
+            if p.get("category") == "furnace"
+        ]
+        res.append({"value": "none", "label": "None / Custom Warm-Air Furnace"})
+        return res
     if category == "boiler":
         res = [
             {"value": p["value"], "label": p["label"]}
             for p in raw_profiles
-            if p.get("category") == "boiler"
+            if p.get("category")
+            in ("boiler", "modulating_boiler", "atmospheric_boiler", "steam_boiler")
         ]
         res.append({"value": "none", "label": "None / Custom Boiler"})
         return res
@@ -330,6 +378,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             elec_sec = user_input.get("electricity_section") or user_input
             gas_sec = user_input.get("gas_section") or user_input
             propane_sec = user_input.get("propane_section") or user_input
+            oil_sec = user_input.get("oil_section") or user_input
             limits_sec = user_input.get("limits_section") or user_input
             pol_sec = user_input.get("policies_section") or user_input
 
@@ -377,6 +426,19 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 else:
                     tariffs.pop(CONF_PROPANE_RATE_SENSOR, None)
 
+            if CONF_OIL_COST_PER_GAL in oil_sec:
+                if oil_sec[CONF_OIL_COST_PER_GAL] is not None:
+                    tariffs[CONF_OIL_COST_PER_GAL] = float(
+                        oil_sec[CONF_OIL_COST_PER_GAL]
+                    )
+                else:
+                    tariffs.pop(CONF_OIL_COST_PER_GAL, None)
+            if CONF_OIL_RATE_SENSOR in oil_sec:
+                if oil_sec[CONF_OIL_RATE_SENSOR]:
+                    tariffs[CONF_OIL_RATE_SENSOR] = oil_sec[CONF_OIL_RATE_SENSOR]
+                else:
+                    tariffs.pop(CONF_OIL_RATE_SENSOR, None)
+
             if CONF_HEAT_PUMP_SAFETY_BAND_F in limits_sec:
                 self._options[CONF_HEAT_PUMP_SAFETY_BAND_F] = float(
                     limits_sec[CONF_HEAT_PUMP_SAFETY_BAND_F]
@@ -398,14 +460,26 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             p.get(CONF_TYPE) in ("heat_pump", "inverter_heat_pump")
             for p in producers.values()
         )
+        fossil_types = (
+            "boiler",
+            "modulating_boiler",
+            "atmospheric_boiler",
+            "steam_boiler",
+            "furnace",
+        )
         has_gas = any(
-            p.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            p.get(CONF_TYPE) in fossil_types
             and p.get(CONF_FUEL_TYPE, "natural_gas") in ("natural_gas", "ng")
             for p in producers.values()
         )
         has_propane = any(
-            p.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            p.get(CONF_TYPE) in fossil_types
             and p.get(CONF_FUEL_TYPE) in ("propane", "lp")
+            for p in producers.values()
+        )
+        has_oil = any(
+            p.get(CONF_TYPE) in fossil_types
+            and p.get(CONF_FUEL_TYPE) in ("oil", "fuel_oil", "oil_no2")
             for p in producers.values()
         )
 
@@ -447,7 +521,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 )
             )
 
-        if has_gas:
+        if has_gas or not producers:
             schema_dict[vol.Optional("gas_section")] = section(
                 vol.Schema(
                     {
@@ -501,6 +575,37 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                             CONF_PROPANE_RATE_SENSOR,
                             description={
                                 "suggested_value": tariffs.get(CONF_PROPANE_RATE_SENSOR)
+                            },
+                        ): selector.EntitySelector(
+                            selector.EntitySelectorConfig(
+                                domain=["sensor", "input_number", "number"]
+                            )
+                        ),
+                    }
+                )
+            )
+
+        if has_oil:
+            schema_dict[vol.Optional("oil_section")] = section(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            CONF_OIL_COST_PER_GAL,
+                            description={
+                                "suggested_value": tariffs.get(CONF_OIL_COST_PER_GAL)
+                            },
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=15.0,
+                                step="any",
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_OIL_RATE_SENSOR,
+                            description={
+                                "suggested_value": tariffs.get(CONF_OIL_RATE_SENSOR)
                             },
                         ): selector.EntitySelector(
                             selector.EntitySelectorConfig(
@@ -655,10 +760,26 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         profile = user_input.get("heat_pump_profile") or user_input.get(
                             CONF_PROFILE
                         )
-                    else:
-                        profile = user_input.get("boiler_profile") or user_input.get(
+                    elif p_type in ("boiler", "modulating_boiler"):
+                        profile = (
+                            user_input.get("modulating_boiler_profile")
+                            or user_input.get("boiler_profile")
+                            or user_input.get(CONF_PROFILE)
+                        )
+                    elif p_type == "atmospheric_boiler":
+                        profile = user_input.get(
+                            "atmospheric_boiler_profile"
+                        ) or user_input.get(CONF_PROFILE)
+                    elif p_type == "steam_boiler":
+                        profile = user_input.get(
+                            "steam_boiler_profile"
+                        ) or user_input.get(CONF_PROFILE)
+                    elif p_type == "furnace":
+                        profile = user_input.get("furnace_profile") or user_input.get(
                             CONF_PROFILE
                         )
+                    else:
+                        profile = user_input.get(CONF_PROFILE)
 
                     if profile == "none":
                         profile = None
@@ -668,9 +789,23 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         CONF_TYPE: p_type,
                         CONF_PROFILE: profile,
                     }
-                    if p_type in ("boiler", "modulating_boiler"):
+                    if user_input.get(CONF_NOMINAL_BTU):
+                        producer_entry[CONF_NOMINAL_BTU] = float(
+                            user_input[CONF_NOMINAL_BTU]
+                        )
+                    if p_type in (
+                        "boiler",
+                        "modulating_boiler",
+                        "atmospheric_boiler",
+                        "steam_boiler",
+                        "furnace",
+                    ):
                         producer_entry[CONF_FUEL_TYPE] = user_input.get(
                             CONF_FUEL_TYPE, "natural_gas"
+                        )
+                    if p_type in ("boiler", "modulating_boiler"):
+                        producer_entry[CONF_HAS_OUTDOOR_RESET] = bool(
+                            user_input.get(CONF_HAS_OUTDOOR_RESET, False)
                         )
                     self._options.setdefault(CONF_PRODUCERS, {})[p_id] = producer_entry
                     return await self.async_step_producers_menu()
@@ -678,17 +813,59 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         hp_profiles = await async_get_available_producer_profiles(
             self.hass, category="heat_pump"
         )
-        boiler_profiles = await async_get_available_producer_profiles(
-            self.hass, category="boiler"
+        mod_con_profiles = await async_get_available_producer_profiles(
+            self.hass, category="modulating_boiler"
+        )
+        atmos_profiles = await async_get_available_producer_profiles(
+            self.hass, category="atmospheric_boiler"
+        )
+        steam_profiles = await async_get_available_producer_profiles(
+            self.hass, category="steam_boiler"
+        )
+        furnace_profiles = await async_get_available_producer_profiles(
+            self.hass, category="furnace"
         )
 
         hp_default = "generic/cold_climate_heat_pump.json"
         if not any(p["value"] == hp_default for p in hp_profiles):
             hp_default = hp_profiles[0]["value"] if hp_profiles else "none"
 
-        boiler_default = "generic/modulating_condensing_boiler.json"
-        if not any(p["value"] == boiler_default for p in boiler_profiles):
-            boiler_default = boiler_profiles[0]["value"] if boiler_profiles else "none"
+        mod_con_default = "generic/modulating_condensing_boiler.json"
+        if not any(p["value"] == mod_con_default for p in mod_con_profiles):
+            mod_con_default = (
+                mod_con_profiles[0]["value"] if mod_con_profiles else "none"
+            )
+
+        atmos_default = "generic/atmospheric_cast_iron_boiler_gas.json"
+        if not any(p["value"] == atmos_default for p in atmos_profiles):
+            atmos_default = atmos_profiles[0]["value"] if atmos_profiles else "none"
+
+        steam_default = "generic/steam_boiler_gas.json"
+        if not any(p["value"] == steam_default for p in steam_profiles):
+            steam_default = steam_profiles[0]["value"] if steam_profiles else "none"
+
+        furnace_default = "generic/furnace_gas_standard.json"
+        if not any(p["value"] == furnace_default for p in furnace_profiles):
+            furnace_default = (
+                furnace_profiles[0]["value"] if furnace_profiles else "none"
+            )
+
+        prod_type_options = [
+            {"value": "heat_pump", "label": "Heat Pump / Mini-Split"},
+            {"value": "modulating_boiler", "label": "Modulating Condensing Boiler"},
+            {
+                "value": "atmospheric_boiler",
+                "label": "Standard Atmospheric Boiler (Cast Iron)",
+            },
+            {"value": "steam_boiler", "label": "Steam Boiler"},
+            {"value": "furnace", "label": "Warm-Air Furnace"},
+        ]
+
+        fuel_options = [
+            {"value": "natural_gas", "label": "Natural Gas"},
+            {"value": "propane", "label": "Propane"},
+            {"value": "oil", "label": "Heating Oil (#2)"},
+        ]
 
         schema = vol.Schema(
             {
@@ -696,16 +873,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 vol.Optional(CONF_ID): str,
                 vol.Optional(CONF_TYPE, default="heat_pump"): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=[
-                            {
-                                "value": "heat_pump",
-                                "label": "Heat Pump / Mini-Split",
-                            },
-                            {
-                                "value": "boiler",
-                                "label": "Boiler",
-                            },
-                        ],
+                        options=prod_type_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -720,28 +888,75 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     )
                 ),
                 Optional(
-                    "boiler_profile",
-                    default=boiler_default,
-                    visible={"field": CONF_TYPE, "value": "boiler"},
+                    "modulating_boiler_profile",
+                    default=mod_con_default,
+                    visible={"field": CONF_TYPE, "value": "modulating_boiler"},
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=boiler_profiles,
+                        options=mod_con_profiles,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    "atmospheric_boiler_profile",
+                    default=atmos_default,
+                    visible={"field": CONF_TYPE, "value": "atmospheric_boiler"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=atmos_profiles,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    "steam_boiler_profile",
+                    default=steam_default,
+                    visible={"field": CONF_TYPE, "value": "steam_boiler"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=steam_profiles,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    "furnace_profile",
+                    default=furnace_default,
+                    visible={"field": CONF_TYPE, "value": "furnace"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=furnace_profiles,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 Optional(
                     CONF_FUEL_TYPE,
                     default="natural_gas",
-                    visible={"field": CONF_TYPE, "value": "boiler"},
+                    visible={
+                        "field": CONF_TYPE,
+                        "operator": "not_eq",
+                        "value": "heat_pump",
+                    },
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=[
-                            {"value": "natural_gas", "label": "Natural Gas"},
-                            {"value": "propane", "label": "Propane"},
-                        ],
+                        options=fuel_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                Optional(
+                    CONF_NOMINAL_BTU,
+                    default=24000.0,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=6000.0,
+                        max=500000.0,
+                        step=1000.0,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                Optional(
+                    CONF_HAS_OUTDOOR_RESET,
+                    default=False,
+                    visible={"field": CONF_TYPE, "value": "modulating_boiler"},
+                ): selector.BooleanSelector(),
                 vol.Optional("cancel", default=False): selector.BooleanSelector(),
             }
         )
@@ -775,10 +990,26 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 profile = user_input.get("heat_pump_profile") or user_input.get(
                     CONF_PROFILE
                 )
-            else:
-                profile = user_input.get("boiler_profile") or user_input.get(
+            elif p_type in ("boiler", "modulating_boiler"):
+                profile = (
+                    user_input.get("modulating_boiler_profile")
+                    or user_input.get("boiler_profile")
+                    or user_input.get(CONF_PROFILE)
+                )
+            elif p_type == "atmospheric_boiler":
+                profile = user_input.get(
+                    "atmospheric_boiler_profile"
+                ) or user_input.get(CONF_PROFILE)
+            elif p_type == "steam_boiler":
+                profile = user_input.get("steam_boiler_profile") or user_input.get(
                     CONF_PROFILE
                 )
+            elif p_type == "furnace":
+                profile = user_input.get("furnace_profile") or user_input.get(
+                    CONF_PROFILE
+                )
+            else:
+                profile = user_input.get(CONF_PROFILE)
 
             if profile == "none":
                 profile = None
@@ -786,59 +1017,135 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             p_conf[CONF_NAME] = user_input.get(CONF_NAME, p_id)
             p_conf[CONF_TYPE] = p_type
             p_conf[CONF_PROFILE] = profile
-            if p_type in ("boiler", "modulating_boiler"):
+            if user_input.get(CONF_NOMINAL_BTU):
+                p_conf[CONF_NOMINAL_BTU] = float(user_input[CONF_NOMINAL_BTU])
+
+            if p_type in (
+                "boiler",
+                "modulating_boiler",
+                "atmospheric_boiler",
+                "steam_boiler",
+                "furnace",
+            ):
                 p_conf[CONF_FUEL_TYPE] = user_input.get(CONF_FUEL_TYPE, "natural_gas")
             else:
                 p_conf.pop(CONF_FUEL_TYPE, None)
+
+            if p_type in ("boiler", "modulating_boiler"):
+                p_conf[CONF_HAS_OUTDOOR_RESET] = bool(
+                    user_input.get(CONF_HAS_OUTDOOR_RESET, False)
+                )
+            else:
+                p_conf.pop(CONF_HAS_OUTDOOR_RESET, None)
+
             return await self.async_step_producers_menu()
 
         hp_profiles = await async_get_available_producer_profiles(
             self.hass, category="heat_pump"
         )
-        boiler_profiles = await async_get_available_producer_profiles(
-            self.hass, category="boiler"
+        mod_con_profiles = await async_get_available_producer_profiles(
+            self.hass, category="modulating_boiler"
         )
-
-        hp_default = "generic/cold_climate_heat_pump.json"
-        if not any(p["value"] == hp_default for p in hp_profiles):
-            hp_default = hp_profiles[0]["value"] if hp_profiles else "none"
-
-        boiler_default = "generic/modulating_condensing_boiler.json"
-        if not any(p["value"] == boiler_default for p in boiler_profiles):
-            boiler_default = boiler_profiles[0]["value"] if boiler_profiles else "none"
+        atmos_profiles = await async_get_available_producer_profiles(
+            self.hass, category="atmospheric_boiler"
+        )
+        steam_profiles = await async_get_available_producer_profiles(
+            self.hass, category="steam_boiler"
+        )
+        furnace_profiles = await async_get_available_producer_profiles(
+            self.hass, category="furnace"
+        )
 
         raw_type = p_conf.get(CONF_TYPE, "heat_pump")
-        norm_type = (
-            "heat_pump" if raw_type in ("heat_pump", "inverter_heat_pump") else "boiler"
-        )
+        if raw_type in ("heat_pump", "inverter_heat_pump"):
+            norm_type = "heat_pump"
+        elif raw_type in ("boiler", "modulating_boiler"):
+            norm_type = "modulating_boiler"
+        elif raw_type in ("atmospheric_boiler", "steam_boiler", "furnace"):
+            norm_type = raw_type
+        else:
+            norm_type = "modulating_boiler"
+
         current_profile = p_conf.get(CONF_PROFILE) or "none"
 
+        hp_default = "generic/cold_climate_heat_pump.json"
         hp_selected = (
             current_profile
             if any(p["value"] == current_profile for p in hp_profiles)
-            else hp_default
+            else (
+                hp_default
+                if any(p["value"] == hp_default for p in hp_profiles)
+                else (hp_profiles[0]["value"] if hp_profiles else "none")
+            )
         )
-        boiler_selected = (
+
+        mod_con_default = "generic/modulating_condensing_boiler.json"
+        mod_con_selected = (
             current_profile
-            if any(p["value"] == current_profile for p in boiler_profiles)
-            else boiler_default
+            if any(p["value"] == current_profile for p in mod_con_profiles)
+            else (
+                mod_con_default
+                if any(p["value"] == mod_con_default for p in mod_con_profiles)
+                else (mod_con_profiles[0]["value"] if mod_con_profiles else "none")
+            )
         )
+
+        atmos_default = "generic/atmospheric_cast_iron_boiler_gas.json"
+        atmos_selected = (
+            current_profile
+            if any(p["value"] == current_profile for p in atmos_profiles)
+            else (
+                atmos_default
+                if any(p["value"] == atmos_default for p in atmos_profiles)
+                else (atmos_profiles[0]["value"] if atmos_profiles else "none")
+            )
+        )
+
+        steam_default = "generic/steam_boiler_gas.json"
+        steam_selected = (
+            current_profile
+            if any(p["value"] == current_profile for p in steam_profiles)
+            else (
+                steam_default
+                if any(p["value"] == steam_default for p in steam_profiles)
+                else (steam_profiles[0]["value"] if steam_profiles else "none")
+            )
+        )
+
+        furnace_default = "generic/furnace_gas_standard.json"
+        furnace_selected = (
+            current_profile
+            if any(p["value"] == current_profile for p in furnace_profiles)
+            else (
+                furnace_default
+                if any(p["value"] == furnace_default for p in furnace_profiles)
+                else (furnace_profiles[0]["value"] if furnace_profiles else "none")
+            )
+        )
+
+        prod_type_options = [
+            {"value": "heat_pump", "label": "Heat Pump / Mini-Split"},
+            {"value": "modulating_boiler", "label": "Modulating Condensing Boiler"},
+            {
+                "value": "atmospheric_boiler",
+                "label": "Standard Atmospheric Boiler (Cast Iron)",
+            },
+            {"value": "steam_boiler", "label": "Steam Boiler"},
+            {"value": "furnace", "label": "Warm-Air Furnace"},
+        ]
+
+        fuel_options = [
+            {"value": "natural_gas", "label": "Natural Gas"},
+            {"value": "propane", "label": "Propane"},
+            {"value": "oil", "label": "Heating Oil (#2)"},
+        ]
 
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=p_conf.get(CONF_NAME, p_id)): str,
                 vol.Required(CONF_TYPE, default=norm_type): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=[
-                            {
-                                "value": "heat_pump",
-                                "label": "Heat Pump / Mini-Split",
-                            },
-                            {
-                                "value": "boiler",
-                                "label": "Boiler",
-                            },
-                        ],
+                        options=prod_type_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -853,28 +1160,80 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     )
                 ),
                 Optional(
-                    "boiler_profile",
-                    default=boiler_selected,
-                    visible={"field": CONF_TYPE, "value": "boiler"},
+                    "modulating_boiler_profile",
+                    default=mod_con_selected,
+                    visible={"field": CONF_TYPE, "value": "modulating_boiler"},
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=boiler_profiles,
+                        options=mod_con_profiles,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    "atmospheric_boiler_profile",
+                    default=atmos_selected,
+                    visible={"field": CONF_TYPE, "value": "atmospheric_boiler"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=atmos_profiles,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    "steam_boiler_profile",
+                    default=steam_selected,
+                    visible={"field": CONF_TYPE, "value": "steam_boiler"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=steam_profiles,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    "furnace_profile",
+                    default=furnace_selected,
+                    visible={"field": CONF_TYPE, "value": "furnace"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=furnace_profiles,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 Optional(
                     CONF_FUEL_TYPE,
                     default=p_conf.get(CONF_FUEL_TYPE, "natural_gas"),
-                    visible={"field": CONF_TYPE, "value": "boiler"},
+                    visible={
+                        "field": CONF_TYPE,
+                        "operator": "not_eq",
+                        "value": "heat_pump",
+                    },
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=[
-                            {"value": "natural_gas", "label": "Natural Gas"},
-                            {"value": "propane", "label": "Propane"},
-                        ],
+                        options=fuel_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                Optional(
+                    CONF_NOMINAL_BTU,
+                    default=p_conf.get(
+                        CONF_NOMINAL_BTU,
+                        24000.0
+                        if norm_type in ("heat_pump", "inverter_heat_pump")
+                        else 100000.0,
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=6000.0,
+                        max=500000.0,
+                        step=1000.0,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                Optional(
+                    CONF_HAS_OUTDOOR_RESET,
+                    default=p_conf.get(CONF_HAS_OUTDOOR_RESET, False),
+                    visible={"field": CONF_TYPE, "value": "modulating_boiler"},
+                ): selector.BooleanSelector(),
                 vol.Optional("cancel", default=False): selector.BooleanSelector(),
                 vol.Optional(
                     "delete_producer", default=False
@@ -1631,7 +1990,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             options.append(
                 {
                     "value": str(idx),
-                    "label": f"[{idx+1}] {e_type} ({e_prod} -> {e_entity})",
+                    "label": f"[{idx + 1}] {e_type} ({e_prod} -> {e_entity})",
                 }
             )
         options.append(
@@ -1690,7 +2049,13 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         boiler_options = [
             {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
             for p_id, p_conf in producers.items()
-            if p_conf.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            if p_conf.get(CONF_TYPE)
+            in ("boiler", "modulating_boiler", "atmospheric_boiler", "steam_boiler")
+        ]
+        furnace_options = [
+            {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+            for p_id, p_conf in producers.items()
+            if p_conf.get(CONF_TYPE) == "furnace"
         ]
         all_prod_options = [
             {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
@@ -1700,6 +2065,8 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             hp_options = all_prod_options
         if not boiler_options:
             boiler_options = all_prod_options
+        if not furnace_options:
+            furnace_options = all_prod_options
 
         has_hp = any(
             p.get(CONF_TYPE) in ("heat_pump", "inverter_heat_pump")
@@ -1708,6 +2075,19 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         default_emitter_type = (
             "hydronic" if not has_hp and boiler_options else "mini_split"
         )
+
+        emitter_type_options = [
+            {"value": "mini_split", "label": "Mini-Split Head"},
+            {"value": "hydronic", "label": "Hydronic Emitter"},
+            {"value": "furnace", "label": "Warm-Air Furnace Register"},
+        ]
+        hydronic_type_options = [
+            {"value": "fin_tube_baseboard", "label": "Fin-Tube Baseboard"},
+            {"value": "cast_iron_radiator", "label": "Cast-Iron Radiator"},
+            {"value": "in_floor_radiant", "label": "Radiant Floor"},
+            {"value": "kickspace", "label": "Kickspace Fan-Coil"},
+            {"value": "hydro_air", "label": "Hydro-Air (Hydronic Air Handler)"},
+        ]
 
         if user_input is not None:
             if user_input.get("cancel"):
@@ -1722,6 +2102,10 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     emitter_prod = user_input.get(
                         "hp_emitter_producer"
                     ) or user_input.get(CONF_PRODUCER, hp_options[0]["value"])
+                elif emitter_type == "furnace":
+                    emitter_prod = user_input.get(
+                        "furnace_emitter_producer"
+                    ) or user_input.get(CONF_PRODUCER, furnace_options[0]["value"])
                 else:
                     emitter_prod = user_input.get(
                         "boiler_emitter_producer"
@@ -1739,6 +2123,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     )
                 elif emitter_type == "hydronic":
                     emitter_data[CONF_ZONE_ID] = user_input.get(CONF_ZONE_ID, "z1")
+                    emitter_data[CONF_HYDRONIC_TYPE] = user_input.get(
+                        CONF_HYDRONIC_TYPE, "fin_tube_baseboard"
+                    )
 
                 space.setdefault(CONF_EMITTERS, []).append(emitter_data)
                 return await self.async_step_emitters_menu()
@@ -1749,13 +2136,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     CONF_TYPE, default=default_emitter_type
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=[
-                            {"value": "mini_split", "label": "Mini-Split Head"},
-                            {
-                                "value": "hydronic",
-                                "label": "Hydronic Baseboard / Radiator",
-                            },
-                        ],
+                        options=emitter_type_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -1779,6 +2160,16 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                Optional(
+                    "furnace_emitter_producer",
+                    default=furnace_options[0]["value"],
+                    visible={"field": CONF_TYPE, "value": "furnace"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=furnace_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Optional(CONF_ENTITY_ID): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain=["climate", "switch"])
                 ),
@@ -1797,9 +2188,19 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
                         min=1000.0,
-                        max=60000.0,
+                        max=100000.0,
                         step=1000.0,
                         mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                Optional(
+                    CONF_HYDRONIC_TYPE,
+                    default="fin_tube_baseboard",
+                    visible={"field": CONF_TYPE, "value": "hydronic"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=hydronic_type_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 Optional(
@@ -1850,6 +2251,10 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 emitter_prod = user_input.get("hp_emitter_producer") or user_input.get(
                     CONF_PRODUCER, emitter_data.get(CONF_PRODUCER)
                 )
+            elif e_type == "furnace":
+                emitter_prod = user_input.get(
+                    "furnace_emitter_producer"
+                ) or user_input.get(CONF_PRODUCER, emitter_data.get(CONF_PRODUCER))
             else:
                 emitter_prod = user_input.get(
                     "boiler_emitter_producer"
@@ -1864,9 +2269,18 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     user_input.get(CONF_NOMINAL_BTU, 12000.0)
                 )
                 emitter_data.pop(CONF_ZONE_ID, None)
+                emitter_data.pop(CONF_HYDRONIC_TYPE, None)
             elif e_type == "hydronic":
                 emitter_data[CONF_ZONE_ID] = user_input.get(CONF_ZONE_ID, "z1")
+                emitter_data[CONF_HYDRONIC_TYPE] = user_input.get(
+                    CONF_HYDRONIC_TYPE, "fin_tube_baseboard"
+                )
                 emitter_data.pop(CONF_NOMINAL_BTU, None)
+            elif e_type == "furnace":
+                emitter_data.pop(CONF_NOMINAL_BTU, None)
+                emitter_data.pop(CONF_ZONE_ID, None)
+                emitter_data.pop(CONF_HYDRONIC_TYPE, None)
+                emitter_data.pop(CONF_HYDRONIC_TYPE, None)
             return await self.async_step_emitters_menu()
 
         producers = self._options.get(CONF_PRODUCERS, {})
@@ -1878,7 +2292,13 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         boiler_options = [
             {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
             for p_id, p_conf in producers.items()
-            if p_conf.get(CONF_TYPE) in ("boiler", "modulating_boiler")
+            if p_conf.get(CONF_TYPE)
+            in ("boiler", "modulating_boiler", "atmospheric_boiler", "steam_boiler")
+        ]
+        furnace_options = [
+            {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
+            for p_id, p_conf in producers.items()
+            if p_conf.get(CONF_TYPE) == "furnace"
         ]
         all_prod_options = [
             {"value": p_id, "label": f"{p_conf.get(CONF_NAME, p_id)} ({p_id})"}
@@ -1888,6 +2308,8 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             hp_options = all_prod_options
         if not boiler_options:
             boiler_options = all_prod_options
+        if not furnace_options:
+            furnace_options = all_prod_options
 
         curr_prod = emitter_data.get(CONF_PRODUCER, "")
         hp_default = (
@@ -1900,6 +2322,24 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             if any(p["value"] == curr_prod for p in boiler_options)
             else boiler_options[0]["value"]
         )
+        furnace_default = (
+            curr_prod
+            if any(p["value"] == curr_prod for p in furnace_options)
+            else furnace_options[0]["value"]
+        )
+
+        emitter_type_options = [
+            {"value": "mini_split", "label": "Mini-Split Head"},
+            {"value": "hydronic", "label": "Hydronic Emitter"},
+            {"value": "furnace", "label": "Warm-Air Furnace Register"},
+        ]
+        hydronic_type_options = [
+            {"value": "fin_tube_baseboard", "label": "Fin-Tube Baseboard"},
+            {"value": "cast_iron_radiator", "label": "Cast-Iron Radiator"},
+            {"value": "in_floor_radiant", "label": "Radiant Floor"},
+            {"value": "kickspace", "label": "Kickspace Fan-Coil"},
+            {"value": "hydro_air", "label": "Hydro-Air (Hydronic Air Handler)"},
+        ]
 
         schema = vol.Schema(
             {
@@ -1907,13 +2347,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     CONF_TYPE, default=emitter_data.get(CONF_TYPE, "mini_split")
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=[
-                            {"value": "mini_split", "label": "Mini-Split Head"},
-                            {
-                                "value": "hydronic",
-                                "label": "Hydronic Baseboard / Radiator",
-                            },
-                        ],
+                        options=emitter_type_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -1934,6 +2368,16 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=boiler_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                Optional(
+                    "furnace_emitter_producer",
+                    default=furnace_default,
+                    visible={"field": CONF_TYPE, "value": "furnace"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=furnace_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -1959,9 +2403,19 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
                         min=1000.0,
-                        max=60000.0,
+                        max=100000.0,
                         step=1000.0,
                         mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                Optional(
+                    CONF_HYDRONIC_TYPE,
+                    default=emitter_data.get(CONF_HYDRONIC_TYPE, "fin_tube_baseboard"),
+                    visible={"field": CONF_TYPE, "value": "hydronic"},
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=hydronic_type_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 Optional(

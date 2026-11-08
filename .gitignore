@@ -105,3 +105,4 @@ venv.bak/
 .mypy_cache/
 HANDOVER.md
 plans/
+AGENTS.md

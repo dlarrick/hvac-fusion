@@ -74,6 +74,14 @@
               "propane_rate_sensor": "Propane Rate Sensor (Optional)"
             }
           },
+          "oil_section": {
+            "name": "Heating Oil Tariff",
+            "description": "Replacement rate ($/gal) or dynamic rate sensor entity for #2 fuel oil.",
+            "data": {
+              "oil_cost_per_gal": "Heating Oil Rate ($/gal)",
+              "oil_rate_sensor": "Heating Oil Rate Sensor (Optional)"
+            }
+          },
           "limits_section": {
             "name": "Operating Limits",
             "description": "Low ambient safety thresholds for heat pump operation.",
@@ -98,6 +106,8 @@
           "gas_rate_sensor": "Natural Gas Rate Sensor (Optional)",
           "propane_cost_per_gal": "Propane Rate ($/gal)",
           "propane_rate_sensor": "Propane Rate Sensor (Optional)",
+          "oil_cost_per_gal": "Heating Oil Rate ($/gal)",
+          "oil_rate_sensor": "Heating Oil Rate Sensor (Optional)",
           "heat_pump_safety_band_f": "Heat Pump Low Ambient Safety Band (°F)",
           "control_enabled": "Enable Physical Control (Uncheck for Dry-Run mode)",
           "cycling_band_deg": "Setpoint Cycling Band (°F)",
@@ -120,8 +130,14 @@
           "type": "Producer Type",
           "heat_pump_profile": "Equipment Profile",
           "boiler_profile": "Equipment Profile",
+          "modulating_boiler_profile": "Equipment Profile",
+          "atmospheric_boiler_profile": "Equipment Profile",
+          "steam_boiler_profile": "Equipment Profile",
+          "furnace_profile": "Equipment Profile",
           "profile": "Equipment Profile",
           "fuel_type": "Fuel Type",
+          "nominal_btu": "Nominal Heating Capacity (BTU)",
+          "has_outdoor_reset": "Has Outdoor Reset Sensor Connected",
           "cancel": "Cancel Add"
         },
         "data_description": {
@@ -144,8 +160,14 @@
           "type": "Producer Type",
           "heat_pump_profile": "Equipment Profile",
           "boiler_profile": "Equipment Profile",
+          "modulating_boiler_profile": "Equipment Profile",
+          "atmospheric_boiler_profile": "Equipment Profile",
+          "steam_boiler_profile": "Equipment Profile",
+          "furnace_profile": "Equipment Profile",
           "profile": "Equipment Profile",
           "fuel_type": "Fuel Type",
+          "nominal_btu": "Nominal Heating Capacity (BTU)",
+          "has_outdoor_reset": "Has Outdoor Reset Sensor Connected",
           "cancel": "Cancel Edit",
           "delete_producer": "Delete this producer"
         },
@@ -184,6 +206,8 @@
           "emitter_type": "Emitter Type",
           "hp_emitter_producer": "Bound Heat Pump Producer",
           "boiler_emitter_producer": "Bound Boiler Producer",
+          "furnace_emitter_producer": "Bound Furnace Producer",
+          "hydronic_type": "Hydronic Emitter Type",
           "emitter_entity_id": "Physical Actuation Entity (climate or switch)",
           "emitter_nominal_btu": "Nominal Heat Pump Head Capacity (BTU)",
           "emitter_zone_id": "Hydronic Zone Identifier (e.g. z1)",
@@ -297,6 +321,8 @@
           "producer": "Bound Producer",
           "hp_emitter_producer": "Bound Heat Pump Producer",
           "boiler_emitter_producer": "Bound Boiler Producer",
+          "furnace_emitter_producer": "Bound Furnace Producer",
+          "hydronic_type": "Hydronic Emitter Type",
           "entity_id": "Physical Actuation Entity (climate or switch)",
           "offset": "Target Setpoint Offset (°F)",
           "nominal_btu": "Nominal BTU (for Mini-Split)",
@@ -322,6 +348,8 @@
           "producer": "Bound Producer",
           "hp_emitter_producer": "Bound Heat Pump Producer",
           "boiler_emitter_producer": "Bound Boiler Producer",
+          "furnace_emitter_producer": "Bound Furnace Producer",
+          "hydronic_type": "Hydronic Emitter Type",
           "entity_id": "Physical Actuation Entity (climate or switch)",
           "offset": "Target Setpoint Offset (°F)",
           "nominal_btu": "Nominal BTU (for Mini-Split)",
@@ -356,9 +384,6 @@
     "sensor": {
       "economic_crossover_temperature": {
         "name": "Economic crossover temperature"
-      },
-      "break_even_cop": {
-        "name": "Break-even COP"
       }
     }
   }

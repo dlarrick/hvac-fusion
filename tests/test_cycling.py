@@ -3,18 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
-from homeassistant.core import HomeAssistant
-from hvac_crossover import (
-    HvacAction as LibHvacAction,
-)
-from hvac_crossover import (
-    HvacMode as LibHvacMode,
-)
-from hvac_crossover import (
-    SpaceDirective,
-)
-
 from custom_components.hvac_fusion import HvacFusionManager
 from custom_components.hvac_fusion.const import (
     CONF_CYCLING_BAND,
@@ -30,6 +18,18 @@ from custom_components.hvac_fusion.const import (
     CONF_TEMP_SENSOR,
     CONF_TYPE,
     CONF_ZONE_ID,
+)
+from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
+from homeassistant.core import HomeAssistant
+
+from hvac_crossover import (
+    HvacAction as LibHvacAction,
+)
+from hvac_crossover import (
+    HvacMode as LibHvacMode,
+)
+from hvac_crossover import (
+    SpaceDirective,
 )
 
 

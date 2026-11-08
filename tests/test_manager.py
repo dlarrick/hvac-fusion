@@ -3,20 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from homeassistant.components.climate import HVACAction
-from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
-from homeassistant.core import HomeAssistant
-from hvac_crossover import (
-    HvacAction as LibHvacAction,
-)
-from hvac_crossover import (
-    HvacMode as LibHvacMode,
-)
-from hvac_crossover import (
-    SharedBoilerRole,
-    SpaceDirective,
-)
-
 from custom_components.hvac_fusion import HvacFusionManager
 from custom_components.hvac_fusion.climate import HvacFusionSpaceClimate
 from custom_components.hvac_fusion.const import (
@@ -28,10 +14,25 @@ from custom_components.hvac_fusion.const import (
     CONF_PRESETS,
     CONF_PRODUCER,
     CONF_PRODUCERS,
+    CONF_PROFILE,
     CONF_SHARED_BOILER_ROLE,
     CONF_SPACES,
     CONF_TARIFFS,
     CONF_TYPE,
+)
+from homeassistant.components.climate import HVACAction
+from homeassistant.const import CONF_ENTITY_ID, CONF_ID, CONF_NAME
+from homeassistant.core import HomeAssistant
+
+from hvac_crossover import (
+    HvacAction as LibHvacAction,
+)
+from hvac_crossover import (
+    HvacMode as LibHvacMode,
+)
+from hvac_crossover import (
+    SharedBoilerRole,
+    SpaceDirective,
 )
 
 
@@ -111,6 +112,8 @@ def test_space_climate_entity_action_mapping():
 
     assert entity.hvac_action == HVACAction.HEATING
     assert "living_room_hp_0" in entity.extra_state_attributes["cycling_emitters"]
+    assert entity.extra_state_attributes["phase"] == "plateau_maintenance"
+    assert entity.extra_state_attributes["in_recovery"] is False
 
 
 @pytest.mark.asyncio
@@ -143,9 +146,10 @@ async def test_space_climate_state_restoration():
         "target_temp_low": 62.0,
         "target_temp_high": 78.0,
     }
-    with patch.object(
-        entity, "async_get_last_state", return_value=mock_last_state
-    ), patch.object(entity, "async_update_from_schedule") as mock_update_sched:
+    with (
+        patch.object(entity, "async_get_last_state", return_value=mock_last_state),
+        patch.object(entity, "async_update_from_schedule") as mock_update_sched,
+    ):
         await entity.async_added_to_hass()
         assert entity.preset_mode == "away"
         assert entity.hvac_mode == "heat_cool"
@@ -164,11 +168,14 @@ async def test_space_climate_state_restoration():
         "target_temp_high": 75.0,
         "temperature": 65.0,
     }
-    with patch.object(
-        entity_manual, "async_get_last_state", return_value=mock_last_manual
-    ), patch.object(
-        entity_manual, "async_update_from_schedule"
-    ) as mock_update_sched_manual:
+    with (
+        patch.object(
+            entity_manual, "async_get_last_state", return_value=mock_last_manual
+        ),
+        patch.object(
+            entity_manual, "async_update_from_schedule"
+        ) as mock_update_sched_manual,
+    ):
         await entity_manual.async_added_to_hass()
         assert entity_manual.preset_mode == "manual"
         assert entity_manual.hvac_mode == "heat"
@@ -305,3 +312,89 @@ def test_space_climate_naming():
     )
     assert entity2.name == "Office Space"
     assert entity2.unique_id == "hvac_fusion_office_space_space"
+
+
+def test_boiler_capacity_and_min_fire():
+    """Verify boiler turndown ratio computes min_fire_btu from boiler nominal_btu."""
+    from hvac_crossover.models.producers import ModulatingBoilerProducer
+
+    hass = MagicMock(spec=HomeAssistant)
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {CONF_GAS_COST_PER_THERM: 1.50},
+        CONF_PRODUCERS: {
+            "boiler1": {
+                CONF_TYPE: "modulating_boiler",
+                CONF_PROFILE: "generic/modulating_condensing_boiler.json",
+                CONF_NOMINAL_BTU: 120000.0,
+            }
+        },
+        CONF_SPACES: [
+            {
+                CONF_ID: "living_room",
+                CONF_NAME: "Living Room",
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "boiler1",
+                        CONF_ENTITY_ID: "switch.lr_valve",
+                    }
+                ],
+            },
+        ],
+    }
+    manager = HvacFusionManager(hass, conf)
+    topology = manager._build_topology()
+    boiler = topology.producers[0]
+    assert isinstance(boiler, ModulatingBoilerProducer)
+    assert boiler.nominal_btu == 120000.0
+    assert boiler.turndown_ratio == 4.0
+    # Boiler physical min fire: 120,000 / 4.0 = 30,000 BTU
+    assert boiler.min_fire_btu == 30000.0
+    # Hydronic emitter does not have nominal_btu
+    emitter = topology.spaces[0].emitters[0]
+    assert not hasattr(emitter, "nominal_btu")
+
+
+def test_heat_pump_capacity_and_derating():
+    """Verify heat pump outdoor unit nominal_btu config and derate curve scaling."""
+    from hvac_crossover.models.producers import InverterHeatPumpProducer
+
+    hass = MagicMock(spec=HomeAssistant)
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {CONF_ELECTRIC_COST_PER_KWH: 0.25},
+        CONF_PRODUCERS: {
+            "hp1": {
+                CONF_TYPE: "heat_pump",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+                CONF_NOMINAL_BTU: 36000.0,
+            }
+        },
+        CONF_SPACES: [
+            {
+                CONF_ID: "living_room",
+                CONF_NAME: "Living Room",
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp1",
+                        CONF_ENTITY_ID: "climate.lr_minisplit",
+                        CONF_NOMINAL_BTU: 18000.0,
+                    }
+                ],
+            },
+        ],
+    }
+    manager = HvacFusionManager(hass, conf)
+    topology = manager._build_topology()
+    hp = topology.producers[0]
+    assert isinstance(hp, InverterHeatPumpProducer)
+    assert hp.nominal_btu == 36000.0
+    assert hp.max_capacity_at(47.0) == 36000.0
+    assert hp.max_capacity_at(17.0) == 27000.0  # 75% derate at 17°F
+    assert hp.max_capacity_at(-4.0) == 18000.0  # 50% derate at -4°F
+    assert hp.max_capacity_at(-10.0) == 0.0  # Below min operational temp
+    # Mini-split head emitter retains its own head rating
+    emitter = topology.spaces[0].emitters[0]
+    assert emitter.nominal_btu == 18000.0

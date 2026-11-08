@@ -26,11 +26,16 @@ from homeassistant.core import (
 )
 from homeassistant.helpers import discovery
 from homeassistant.helpers.event import async_track_time_interval
+
 from hvac_crossover import (
+    AtmosphericBoilerProducer,
     ComfortRange,
     CoordinatorConfig,
     DualFuelCoordinator,
+    EmitterType,
     FuelType,
+    FurnaceProducer,
+    FurnaceRegister,
     HvacMode,
     HydronicEmitter,
     MiniSplitHead,
@@ -39,6 +44,7 @@ from hvac_crossover import (
     SharedBoilerRole,
     Space,
     SpaceCondition,
+    SteamBoilerProducer,
     SystemSnapshot,
     SystemTopology,
     TariffSchedule,
@@ -56,11 +62,16 @@ from .const import (
     CONF_FUEL_TYPE,
     CONF_GAS_COST_PER_THERM,
     CONF_GAS_RATE_SENSOR,
+    CONF_HAS_OUTDOOR_RESET,
+    CONF_HYDRONIC_TYPE,
     CONF_MIN_FIRE_BTU,
     CONF_NOMINAL_BTU,
     CONF_OFFSET,
+    CONF_OIL_COST_PER_GAL,
+    CONF_OIL_RATE_SENSOR,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
     CONF_PRESETS,
+    CONF_PRIMARY_FLOW_GPM,
     CONF_PRIORITY,
     CONF_PRODUCER,
     CONF_PRODUCERS,
@@ -154,9 +165,7 @@ CONFIG_SCHEMA = vol.Schema(
                                 vol.Optional(CONF_RATED_AFUE, default=0.95): vol.Coerce(
                                     float
                                 ),
-                                vol.Optional(
-                                    CONF_MIN_FIRE_BTU, default=20000.0
-                                ): vol.Coerce(float),
+                                vol.Optional(CONF_MIN_FIRE_BTU): vol.Coerce(float),
                             }
                         )
                     }
@@ -288,9 +297,14 @@ class HvacFusionManager:
         propane_cost = self._resolve_sensor_or_float(
             propane_sensor, tariffs_conf.get(CONF_PROPANE_COST_PER_GAL, 0.0)
         )
+        oil_sensor = tariffs_conf.get(CONF_OIL_RATE_SENSOR)
+        oil_cost = self._resolve_sensor_or_float(
+            oil_sensor, tariffs_conf.get(CONF_OIL_COST_PER_GAL, 0.0)
+        )
         return TariffSchedule(
             gas_cost_per_therm=gas_cost,
             propane_cost_per_gal=propane_cost,
+            oil_cost_per_gal=oil_cost,
             elec_cost_per_kwh=elec_cost,
         )
 
@@ -315,11 +329,48 @@ class HvacFusionManager:
             ProducerType.MODULATING_BOILER,
             ProducerType.ATMOSPHERIC_BOILER,
             ProducerType.STEAM_BOILER,
+            ProducerType.FURNACE,
         )
         boilers = [
             p for p in self.topology.producers if p.producer_type in boiler_types
         ]
         return boilers[0] if boilers else None
+
+    @property
+    def estimated_boiler_return_temp_f(self) -> float | None:
+        """Estimated return water temperature for the primary boiler."""
+        if self.last_plan:
+            diag = self.last_plan.diagnostics
+            if diag and diag.boiler_return_temps:
+                primary = self.primary_boiler
+                if primary and primary.id in diag.boiler_return_temps:
+                    return diag.boiler_return_temps[primary.id]
+                return next(iter(diag.boiler_return_temps.values()))
+        return None
+
+    @property
+    def estimated_boiler_efficiency(self) -> float | None:
+        """Estimated in-situ efficiency for the primary boiler."""
+        if self.last_plan:
+            diag = self.last_plan.diagnostics
+            if diag and diag.boiler_efficiencies:
+                primary = self.primary_boiler
+                if primary and primary.id in diag.boiler_efficiencies:
+                    return diag.boiler_efficiencies[primary.id]
+                return next(iter(diag.boiler_efficiencies.values()))
+        return None
+
+    @property
+    def boiler_condensing_state(self) -> str | None:
+        """Condensing operational state (condensing, marginal, dry)."""
+        if self.last_plan:
+            diag = self.last_plan.diagnostics
+            if diag and diag.boiler_condensing_states:
+                primary = self.primary_boiler
+                if primary and primary.id in diag.boiler_condensing_states:
+                    return diag.boiler_condensing_states[primary.id]
+                return next(iter(diag.boiler_condensing_states.values()))
+        return None
 
     @property
     def primary_heat_pump(self) -> Any | None:
@@ -390,6 +441,14 @@ class HvacFusionManager:
             _LOGGER.debug("Could not compute crossover temperature: %s", err)
             return None
 
+    @property
+    def system_phase(self) -> str | None:
+        """Return the current macro system operational phase."""
+        if self.last_plan and self.last_plan.diagnostics:
+            phase = self.last_plan.diagnostics.system_phase
+            return phase.value if hasattr(phase, "value") else str(phase)
+        return None
+
     async def async_init(self) -> None:
         """Asynchronously load topology profiles and build coordinator."""
         self.topology = await self.hass.async_add_executor_job(self._build_topology)
@@ -402,21 +461,29 @@ class HvacFusionManager:
             p_name = p_conf.get(CONF_NAME, p_id)
             profile_name = p_conf.get(CONF_PROFILE)
             p_type = p_conf.get(CONF_TYPE, "heat_pump")
-            fuel_str = p_conf.get(CONF_FUEL_TYPE, "natural_gas").lower()
-            fuel = (
-                FuelType.PROPANE
-                if fuel_str in ("propane", "lp")
-                else FuelType.NATURAL_GAS
-            )
+            fuel_str = str(p_conf.get(CONF_FUEL_TYPE, "natural_gas")).lower()
+            if fuel_str in ("propane", "lp"):
+                fuel = FuelType.PROPANE
+            elif fuel_str in ("oil", "fuel_oil", "oil_no2"):
+                fuel = FuelType.OIL
+            else:
+                fuel = FuelType.NATURAL_GAS
 
             if profile_name:
                 resolved_path = _resolve_profile_path(profile_name)
+                nominal_val = p_conf.get(CONF_NOMINAL_BTU)
                 prod = ProducerProfileFactory.load_from_json(
                     file_path=resolved_path,
                     producer_id=p_id,
                     name=p_name,
                     fuel_type=fuel,
+                    nominal_btu=float(nominal_val) if nominal_val is not None else None,
                 )
+                if isinstance(prod, ModulatingBoilerProducer):
+                    if CONF_HAS_OUTDOOR_RESET in p_conf:
+                        prod.has_outdoor_reset = bool(p_conf[CONF_HAS_OUTDOOR_RESET])
+                    if CONF_PRIMARY_FLOW_GPM in p_conf:
+                        prod.primary_flow_gpm = float(p_conf[CONF_PRIMARY_FLOW_GPM])
                 producers.append(prod)
             elif p_type in ("boiler", "modulating_boiler"):
                 prod = ModulatingBoilerProducer(
@@ -425,12 +492,43 @@ class HvacFusionManager:
                     nominal_btu=float(p_conf.get(CONF_NOMINAL_BTU, 150000.0)),
                     fuel_type=fuel,
                     rated_afue=float(p_conf.get(CONF_RATED_AFUE, 0.95)),
-                    min_fire_btu=float(p_conf.get(CONF_MIN_FIRE_BTU, 20000.0)),
+                    min_fire_btu=float(p_conf[CONF_MIN_FIRE_BTU])
+                    if CONF_MIN_FIRE_BTU in p_conf
+                    else None,
+                    has_outdoor_reset=bool(p_conf.get(CONF_HAS_OUTDOOR_RESET, False)),
+                    primary_flow_gpm=float(p_conf.get(CONF_PRIMARY_FLOW_GPM, 12.0)),
+                )
+                producers.append(prod)
+            elif p_type == "atmospheric_boiler":
+                prod = AtmosphericBoilerProducer(
+                    id=p_id,
+                    name=p_name,
+                    nominal_btu=float(p_conf.get(CONF_NOMINAL_BTU, 100000.0)),
+                    fuel_type=fuel,
+                    rated_afue=float(p_conf.get(CONF_RATED_AFUE, 0.83)),
+                )
+                producers.append(prod)
+            elif p_type == "steam_boiler":
+                prod = SteamBoilerProducer(
+                    id=p_id,
+                    name=p_name,
+                    nominal_btu=float(p_conf.get(CONF_NOMINAL_BTU, 100000.0)),
+                    fuel_type=fuel,
+                    rated_afue=float(p_conf.get(CONF_RATED_AFUE, 0.81)),
+                )
+                producers.append(prod)
+            elif p_type == "furnace":
+                prod = FurnaceProducer(
+                    id=p_id,
+                    name=p_name,
+                    nominal_btu=float(p_conf.get(CONF_NOMINAL_BTU, 80000.0)),
+                    fuel_type=fuel,
+                    rated_afue=float(p_conf.get(CONF_RATED_AFUE, 0.80)),
                 )
                 producers.append(prod)
             else:
                 _LOGGER.warning(
-                    "Producer %s requires either a profile or boiler type",
+                    "Producer %s requires either a profile or known producer type",
                     p_id,
                 )
 
@@ -465,11 +563,32 @@ class HvacFusionManager:
                 elif e_type == "hydronic":
                     zone_id = e_conf.get(CONF_ZONE_ID, "z1")
                     self.emitter_zones[e_id] = zone_id
+                    hydronic_type_str = e_conf.get(
+                        CONF_HYDRONIC_TYPE, "fin_tube_baseboard"
+                    )
+                    hydronic_type_map = {
+                        "fin_tube_baseboard": EmitterType.FIN_TUBE_BASEBOARD,
+                        "cast_iron_radiator": EmitterType.CAST_IRON_RADIATOR,
+                        "in_floor_radiant": EmitterType.IN_FLOOR_RADIANT,
+                        "kickspace": EmitterType.KICKSPACE,
+                        "hydro_air": EmitterType.HYDRO_AIR,
+                    }
+                    emitter_type_enum = hydronic_type_map.get(
+                        hydronic_type_str, EmitterType.FIN_TUBE_BASEBOARD
+                    )
                     emitters.append(
                         HydronicEmitter(
                             id=e_id,
                             producer_id=p_id,
                             zone_id=zone_id,
+                            emitter_type=emitter_type_enum,
+                        )
+                    )
+                elif e_type == "furnace":
+                    emitters.append(
+                        FurnaceRegister(
+                            id=e_id,
+                            producer_id=p_id,
                         )
                     )
 
@@ -611,11 +730,13 @@ class HvacFusionManager:
         for s_id, entity in self.space_entities.items():
             s_dir = plan.space_directives.get(s_id)
             entity.update_from_directive(s_dir, plan.diagnostics)
-            entity.async_write_ha_state()
+            if getattr(entity, "hass", None) is not None:
+                entity.async_write_ha_state()
 
         # Update diagnostic sensor entities
         for sensor in self.sensor_entities:
-            sensor.async_write_ha_state()
+            if getattr(sensor, "hass", None) is not None:
+                sensor.async_write_ha_state()
 
     async def _dispatch_subsidiary_commands(self, plan: Any, dry_run: bool) -> None:
         """Actuates physical climate entities according to plan directives."""
@@ -896,7 +1017,8 @@ class HvacFusionManager:
                     if is_clamped:
                         if e_id not in self._cycling_logged:
                             _LOGGER.warning(
-                                "Mini-split %s: ideal_temp %.1f clamped to %.1f (min=%s, max=%s). Engaging setpoint cycling.",
+                                "Mini-split %s: ideal_temp %.1f clamped to %.1f (min=%s, max=%s)."
+                                " Engaging setpoint cycling.",
                                 entity_id,
                                 ideal_temp,
                                 clamped_temp,
@@ -910,7 +1032,8 @@ class HvacFusionManager:
                         )
                         if curr_space_temp is None:
                             _LOGGER.warning(
-                                "Mini-split %s: space temp sensor unavailable; falling back to direct clamped setpoint %.1f",
+                                "Mini-split %s: space temp sensor unavailable; "
+                                "falling back to direct clamped setpoint %.1f",
                                 entity_id,
                                 clamped_temp,
                             )
@@ -968,7 +1091,8 @@ class HvacFusionManager:
                                 if not currently_on and curr_space_temp < on_threshold:
                                     self._cycling_state[e_id] = True
                                     _LOGGER.info(
-                                        "Cycling ON mini-split %s: space_temp %.1f < on_thresh %.1f (heat setpoint=%.1f)",
+                                        "Cycling ON mini-split %s: space_temp %.1f < on_thresh %.1f "
+                                        "(heat setpoint=%.1f)",
                                         entity_id,
                                         curr_space_temp,
                                         on_threshold,
@@ -1062,7 +1186,8 @@ class HvacFusionManager:
                                 if not currently_on and curr_space_temp > on_threshold:
                                     self._cycling_state[e_id] = True
                                     _LOGGER.info(
-                                        "Cycling ON mini-split %s: space_temp %.1f > on_thresh %.1f (cool setpoint=%.1f)",
+                                        "Cycling ON mini-split %s: space_temp %.1f > on_thresh %.1f "
+                                        "(cool setpoint=%.1f)",
                                         entity_id,
                                         curr_space_temp,
                                         on_threshold,
