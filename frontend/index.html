@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schedule Preset Card - Local Dev Preview</title>
+  <style>
+    body {
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 30px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 860px;
+    }
+
+    .demo-header {
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .demo-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .demo-subtitle {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+
+    .state-inspector {
+      margin-top: 24px;
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .inspector-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #38bdf8;
+    }
+
+    pre {
+      background: #0b1120;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      overflow-x: auto;
+      max-height: 250px;
+      color: #cbd5e1;
+    }
+  </style>
+  <script type="module" src="/src/schedule-preset-card.ts"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="demo-header">
+      <div>
+        <h1 class="demo-title">Climate Preset Schedule Card</h1>
+        <div class="demo-subtitle">Home Assistant Native Schedule Helper Editor (Mock Preview)</div>
+      </div>
+    </div>
+
+    <!-- The Custom Lovelace Card Component -->
+    <schedule-preset-card id="testCard"></schedule-preset-card>
+
+    <div class="state-inspector">
+      <div class="inspector-title">Live WebSocket Persistence (schedule/update payload)</div>
+      <pre id="jsonOutput">Select or edit a schedule above to see data output...</pre>
+    </div>
+  </div>
+
+  <script type="module">
+    // Mock Home Assistant Schedule entities based on victorian_configuration.yaml
+    const mockSchedules = [
+      {
+        id: "first_floor_occupied",
+        name: "1st Floor Occupied Schedule",
+        monday: [
+          { from: "00:00:00", to: "06:30:00", data: { hvac_mode: "heat", heat_to: 62.0 } },
+          { from: "06:30:00", to: "22:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 74.0 } },
+          { from: "22:00:00", to: "24:00:00", data: { hvac_mode: "heat", heat_to: 62.0 } }
+        ],
+        tuesday: [
+          { from: "00:00:00", to: "06:30:00", data: { hvac_mode: "heat", heat_to: 62.0 } },
+          { from: "06:30:00", to: "22:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 74.0 } },
+          { from: "22:00:00", to: "24:00:00", data: { hvac_mode: "heat", heat_to: 62.0 } }
+        ],
+        wednesday: [
+          { from: "00:00:00", to: "06:30:00", data: { hvac_mode: "heat", heat_to: 62.0 } },
+          { from: "06:30:00", to: "22:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 74.0 } },
+          { from: "22:00:00", to: "24:00:00", data: { hvac_mode: "heat", heat_to: 62.0 } }
+        ],
+        thursday: [
+          { from: "00:00:00", to: "06:30:00", data: { hvac_mode: "heat", heat_to: 62.0 } },
+          { from: "06:30:00", to: "22:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 74.0 } },
+          { from: "22:00:00", to: "24:00:00", data: { hvac_mode: "heat", heat_to: 62.0 } }
+        ],
+        friday: [
+          { from: "00:00:00", to: "06:30:00", data: { hvac_mode: "heat", heat_to: 62.0 } },
+          { from: "06:30:00", to: "22:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 74.0 } },
+          { from: "22:00:00", to: "24:00:00", data: { hvac_mode: "heat", heat_to: 62.0 } }
+        ],
+        saturday: [
+          { from: "00:00:00", to: "07:30:00", data: { hvac_mode: "heat", heat_to: 62.0 } },
+          { from: "07:30:00", to: "23:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 74.0 } },
+          { from: "23:00:00", to: "24:00:00", data: { hvac_mode: "heat", heat_to: 62.0 } }
+        ],
+        sunday: [
+          { from: "00:00:00", to: "07:30:00", data: { hvac_mode: "heat", heat_to: 62.0 } },
+          { from: "07:30:00", to: "23:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 74.0 } },
+          { from: "23:00:00", to: "24:00:00", data: { hvac_mode: "heat", heat_to: 62.0 } }
+        ]
+      },
+      {
+        id: "loft_work_hours",
+        name: "Loft Office Hours (with 45-min short block test)",
+        monday: [
+          { from: "08:00:00", to: "12:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 73.0 } },
+          // Short 45-min block to test horizontal aspect ratio rotation:
+          { from: "12:30:00", to: "13:15:00", data: { hvac_mode: "heat_cool", heat_to: 66.0, cool_to: 75.0 } },
+          { from: "13:30:00", to: "18:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 73.0 } }
+        ],
+        tuesday: [
+          { from: "08:00:00", to: "18:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 73.0 } }
+        ],
+        wednesday: [
+          { from: "08:00:00", to: "18:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 73.0 } }
+        ],
+        thursday: [
+          { from: "08:00:00", to: "18:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 73.0 } }
+        ],
+        friday: [
+          { from: "08:00:00", to: "18:00:00", data: { hvac_mode: "heat_cool", heat_to: 68.0, cool_to: 73.0 } }
+        ],
+        saturday: [],
+        sunday: []
+      }
+    ];
+
+    function updateInspector(scheduleId, data) {
+      document.getElementById('jsonOutput').textContent = JSON.stringify(
+        { schedule_id: scheduleId, ...data },
+        null,
+        2
+      );
+    }
+
+    // Mock Home Assistant object
+    const mockHass = {
+      states: {
+        'schedule.first_floor_occupied': {
+          entity_id: 'schedule.first_floor_occupied',
+          state: 'on',
+          attributes: { friendly_name: '1st Floor Occupied Schedule' }
+        },
+        'schedule.loft_work_hours': {
+          entity_id: 'schedule.loft_work_hours',
+          state: 'off',
+          attributes: { friendly_name: 'Loft Office Hours' }
+        }
+      },
+      config: {
+        unit_system: { temperature: '°F' }
+      },
+      callWS: async (msg) => {
+        console.log('[Mock WS Call]', msg);
+        if (msg.type === 'schedule/list') {
+          return mockSchedules;
+        }
+        if (msg.type === 'schedule/update') {
+          const item = mockSchedules.find(s => s.id === msg.schedule_id);
+          if (item) {
+            for (const d of ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']) {
+              if (msg[d]) item[d] = msg[d];
+            }
+          }
+          updateInspector(msg.schedule_id, msg);
+          return { success: true };
+        }
+        return null;
+      }
+    };
+
+    const card = document.getElementById('testCard');
+    card.setConfig({
+      title: 'Victorian 1st Floor Climate Schedule',
+      temperature_unit: '°F',
+      step_size: 15,
+      min_deadband: 2
+    });
+    card.hass = mockHass;
+  </script>
+</body>
+</html>

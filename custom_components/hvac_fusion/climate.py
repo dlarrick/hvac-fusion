@@ -284,10 +284,16 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         else:
             phase = "plateau_maintenance"
 
+        is_editing = False
+        if self.active_schedule_entity:
+            is_editing = self._manager.is_schedule_locked(self.active_schedule_entity)
+
         return {
             "space_id": self._space_id,
             "preset_mode": self._attr_preset_mode,
             "active_schedule": self.active_schedule_entity,
+            "schedule_editing": is_editing,
+            "presets": self._presets,
             "active_delivery_units": self._active_delivery_units,
             "cycling_emitters": cycling_emitters,
             "active_producer": self._active_producer,

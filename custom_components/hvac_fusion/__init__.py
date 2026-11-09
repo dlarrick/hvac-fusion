@@ -248,6 +248,8 @@ class HvacFusionManager:
             for sched_id in s_conf.get(CONF_PRESETS, {}).values():
                 self.schedule_entities.add(sched_id)
 
+        self._schedule_locks: dict[str, float] = {}
+
     @property
     def spaces_config(self) -> list[dict[str, Any]]:
         """Return spaces configuration normalized as a list."""
@@ -610,6 +612,48 @@ class HvacFusionManager:
 
     def register_space_entity(self, space_id: str, entity: Any) -> None:
         self.space_entities[space_id] = entity
+
+    def acquire_schedule_lock(self, schedule_id: str, duration: int = 300) -> None:
+        """Acquire a temporary edit lock on a schedule for human editing."""
+        import time
+
+        schedule_key = schedule_id.removeprefix("schedule.")
+        self._schedule_locks[schedule_key] = time.time() + duration
+        self._notify_schedule_lock_change()
+        self.hass.bus.async_fire(
+            "hvac_fusion_schedule_lock_acquired",
+            {"schedule_id": schedule_key, "duration": duration},
+        )
+
+    def release_schedule_lock(self, schedule_id: str) -> None:
+        """Release a human edit lock on a schedule."""
+        schedule_key = schedule_id.removeprefix("schedule.")
+        if schedule_key in self._schedule_locks:
+            del self._schedule_locks[schedule_key]
+            self._notify_schedule_lock_change()
+            self.hass.bus.async_fire(
+                "hvac_fusion_schedule_lock_released",
+                {"schedule_id": schedule_key},
+            )
+
+    def is_schedule_locked(self, schedule_id: str) -> bool:
+        """Check if a schedule is currently locked by a human editor."""
+        import time
+
+        schedule_key = schedule_id.removeprefix("schedule.")
+        expires_at = self._schedule_locks.get(schedule_key)
+        if expires_at is None:
+            return False
+        if time.time() > expires_at:
+            del self._schedule_locks[schedule_key]
+            return False
+        return True
+
+    def _notify_schedule_lock_change(self) -> None:
+        """Notify registered space entities to update their state attributes."""
+        for entity in self.space_entities.values():
+            if hasattr(entity, "async_write_ha_state"):
+                entity.async_write_ha_state()
 
     def get_space_current_temp(self, space_conf: dict[str, Any]) -> float | None:
         sensor_id = space_conf.get(CONF_TEMP_SENSOR)
@@ -1332,6 +1376,10 @@ class HvacFusionManager:
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up the HVAC Fusion integration from YAML configuration."""
+    from .frontend_loader import async_register_frontend
+
+    await async_register_frontend(hass)
+
     if DOMAIN not in config:
         return True
 
@@ -1414,18 +1462,56 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         handle_get_report,
         supports_response=SupportsResponse.ONLY,
     )
+    async_register_services(hass)
     return True
+
+
+def async_register_services(hass: HomeAssistant) -> None:
+    """Register hvac_fusion integration services."""
+    if not hass.services.has_service(DOMAIN, "acquire_schedule_lock"):
+
+        async def handle_acquire_lock(call: ServiceCall) -> None:
+            schedule_id = call.data.get("schedule_id", "")
+            duration = int(call.data.get("duration", 300))
+            for item in hass.data.get(DOMAIN, {}).values():
+                if isinstance(item, HvacFusionManager):
+                    item.acquire_schedule_lock(schedule_id, duration)
+
+        hass.services.async_register(
+            DOMAIN,
+            "acquire_schedule_lock",
+            handle_acquire_lock,
+        )
+
+    if not hass.services.has_service(DOMAIN, "release_schedule_lock"):
+
+        async def handle_release_lock(call: ServiceCall) -> None:
+            schedule_id = call.data.get("schedule_id", "")
+            for item in hass.data.get(DOMAIN, {}).values():
+                if isinstance(item, HvacFusionManager):
+                    item.release_schedule_lock(schedule_id)
+
+        hass.services.async_register(
+            DOMAIN,
+            "release_schedule_lock",
+            handle_release_lock,
+        )
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: config_entries.ConfigEntry
 ) -> bool:
     """Set up HVAC Fusion from a config entry."""
+    from .frontend_loader import async_register_frontend
+
+    await async_register_frontend(hass)
+
     conf = dict(entry.data)
     conf.update(entry.options)
 
     manager = HvacFusionManager(hass, conf, entry_id=entry.entry_id)
     await manager.async_init()
+    async_register_services(hass)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = manager
