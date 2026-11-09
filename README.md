@@ -17,7 +17,7 @@ HVAC Fusion uses the core physics and arbitration engine from [`hvac-crossover`]
 - **Arbitration**: Manages multi-split outdoor units (ODUs) to prevent conflicting simultaneous heating/cooling demands across indoor units (IDUs).
 - **Recovery Acceleration**: Detects large temperature differentials or recovery calls to enlist high-capacity auxiliary heat (such as condensing or standard boilers).
 - **Virtual Space Climate Entities**: Exposes unified climate entities to Home Assistant, controlling multiple underlying climate entities per space, for intuitive schedule and thermostat card control (`heat_cool`, `heat`, `cool`, `off`).
-- **Custom Lovelace Schedule & Timeline Cards**: Ships with built-in dashboard cards (`schedule-preset-card` and `climate-preset-timeline`) for visual 7-day and 1-day schedule creation and real-time preset tracking with human edit lock coordination.
+- **Custom Lovelace Schedule & Timeline Cards**: Ships with built-in dashboard cards (`schedule-preset-card` and `climate-preset-timeline`) for visual 7-day and 1-day schedule creation and editing, plus real-time preset tracking with human edit lock coordination.
 - **Flexible Native Schedule Integration**: Follows native Home Assistant `schedule` entities via customizable preset modes.
 - **Monitoring / Shadow Mode**: Supports a `control_enabled: false` mode with diagnostic reporting services to validate behavior before commanding physical equipment.
 
@@ -54,14 +54,14 @@ cards:
 An interactive 7-day vertical timeline calendar designed to visualize and edit native Home Assistant `schedule.*` entities with multi-mode preset payloads (`hvac_mode`, `heat_to`, `cool_to`).
 * **Visual Editing**: Drag to create new blocks, drag block bodies to shift times, and drag top/bottom edge handles to adjust start and end times in 15-minute increments.
 * **Block Actions**: Click any block to edit temperatures and HVAC mode, split a block into two, or copy blocks across weekdays, weekends, or all days.
-* **Header Schedule Switcher**: A dynamic dropdown menu in the header lets you switch between all configured schedules on the fly.
+* **Schedule Switcher**: A dropdown menu lets you quickly switch between different configured schedules on the fly.
 * **Compact & Full Views**: Toggle between a compact `280px` overview (4-hour time marks) and a full `580px` detailed editor (2-hour time marks).
-* **Cross-Card Synchronization**: Background polling (15s) and `BroadcastChannel` synchronization immediately reflect edits made in other cards or tabs.
+* **Live Synchronization**: Real-time cross-card bus and background WebSocket polling ensure edits made anywhere—in another card, another browser tab, or via external automations and services—are reflected without needing a page refresh.
 
 ### 2. `climate-preset-timeline` (1-Day Climate Preset Tracker)
 A horizontal daily timeline strip designed to sit on space control dashboards and track what the climate entity is running right now.
 * **Live "NOW" Needle**: An active red needle indicates the exact current time of day and updates every 30 seconds.
-* **Dynamic Preset Tracking**: Automatically reads the climate entity's current preset and active schedule. When a user manually overrides temperatures, the card highlights a yellow `⏸️ Manual Hold Active` banner.
+* **Dynamic Preset Tracking**: Automatically reads the climate entity's current preset and active schedule. When the space is in manual mode (via manual temperature adjustment or selecting the `manual` preset), the card displays a yellow `⏸️ Manual Hold Active` banner.
 * **Day Navigation**: Flip between days (`‹ Previous Day` / `Next Day ›`) to inspect upcoming routines.
 * **Inline Day Editing**: Click `[ ✎ Edit ]` to edit, adjust, or insert preset blocks directly from the 1-day strip without navigating to settings.
 
@@ -201,6 +201,10 @@ A dedicated status sensor is created for each piece of heating or cooling equipm
   * `estimated_return_temp_f`: Estimated return water temperature (for modulating condensing boilers).
   * `estimated_efficiency`: Current estimated operating combustion efficiency based on load and return water temperature.
   * `condensing_state`: Flue gas condensing state (`condensing` vs. `dry`).
+
+## Acknowledgments & Attribution
+
+The visual presentation, dual-setpoint interaction, and weekly calendar layout in `schedule-preset-card` are adapted from and inspired by the excellent work of **[arozoire](https://github.com/arozoire)** in [`schedule_creator`](https://github.com/arozoire/schedule_creator) and `weekly-schedule-card` (MIT Licensed), re-engineered here to operate natively with Home Assistant's built-in `schedule.*` helper entities and Core WebSocket APIs.
 
 ## License
 

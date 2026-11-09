@@ -1,13 +1,16 @@
-# Climate Preset Schedule Card (`schedule-preset-card`)
+# HVAC Fusion Cards
 
-A Home Assistant Lovelace custom card for visually viewing and editing climate preset schedules backed by native **`schedule.*`** helper entities.
+A suite of Home Assistant Lovelace custom cards for viewing and editing climate preset schedules backed by native **`schedule.*`** helper entities and tracking live space preset states.
 
-Designed specifically to partner with multi-emitter climate coordinators like **`hvac-fusion`**, which expect active time blocks to carry target HVAC modes and dual setpoint ranges (`heat_to`, `cool_to`) inside their `data` dictionary.
+Bundles two companion cards in a single unified bundle (`dist/hvac-fusion-cards.js`):
+1. **`custom:schedule-preset-card`**: 7-day interactive weekly schedule calendar editor.
+2. **`custom:climate-preset-timeline`**: 1-day horizontal timeline strip tracking active presets and space status.
 
 ---
 
 ## Features
 
+### 1. 7-Day Schedule Calendar (`custom:schedule-preset-card`)
 * **Native HA WebSocket Backend**: Reads and updates native `schedule.*` entities directly using Home Assistant's Core `schedule/list` and `schedule/update` WebSocket APIs—no custom daemons or non-standard storage engines required.
 * **Dual Setpoint Visualization**:
   * **Cooling Scale (Blue)**: Colder targets are deeper azure/navy; warmer targets are soft ice blue.
@@ -18,32 +21,49 @@ Designed specifically to partner with multi-emitter climate coordinators like **
   * **Short duration blocks (< 45 min)**: Division rotates by 90° into a side-by-side format (Left heating, right cooling) so temperature values and color bands remain legible.
 * **Interactive Editing**:
   * Drag top and bottom edges to resize start/end times with 15-minute snapping.
+  * Drag block bodies to shift times across the day.
   * Click anywhere on an empty track to create a new block.
   * Click any block to open the preset modal dialog:
     * Mode selector: `heat_cool`, `heat`, `cool`, `off`.
     * Dual setpoint steppers with minimum deadband enforcement.
     * Quick copy shortcuts: "Copy to Weekdays", "Copy to Weekend", "Copy to All 7 Days".
+    * Split block tool into two segments.
     * Delete block button.
-* **Read-Only Detection**: Displays a badge if a schedule was defined in YAML, preventing accidental desync.
+* **Schedule Switcher**: Dynamically switch between any configured schedules without reconfiguring the card.
+* **Compact / Full View Toggle**: Switch between compact `280px` overview (4-hour time marks) and full `580px` view (2-hour marks).
+
+### 2. 1-Day Climate Preset Tracker (`custom:climate-preset-timeline`)
+* **Live "NOW" Needle**: An active red needle indicates current time of day, updating every 30 seconds.
+* **Active Preset Tracking**: Reads the target space's climate entity (`climate.<space_id>_space`) and displays the active preset badge.
+* **Manual Hold Banner**: Displays `⏸️ Manual Hold Active — No schedule running` whenever the space is in manual mode (via manual setpoint adjustment or selecting the `manual` preset).
+* **Day Navigation**: Flip between days (`‹ Previous Day` / `Next Day ›`) to inspect upcoming routines.
+* **Inline Day Editing**: Click `[ ✎ Edit ]` to add, adjust, or split blocks directly on the daily track.
+
+### 3. Live Synchronization & Safety Locks
+* **Live Synchronization**: Real-time cross-card bus and background WebSocket polling ensure edits made anywhere—in another card, another browser tab, or via external automations and services—are reflected without needing a page refresh.
+* **Edit Mode Lock**: Clicking `[ ✎ Edit ]` invokes `hvac_fusion.acquire_schedule_lock` (setting `schedule_editing: true` on the climate entity) so automated supervisors know not to overwrite the schedule while a human is editing.
 
 ---
 
-## Installation & Configuration
+## Configuration Examples
 
-### Lovelace Dashboard Resource
-
-Add the compiled bundle to your Home Assistant dashboard resources:
-```yaml
-url: /local/schedule-preset-card/schedule-preset-card.js
-type: module
-```
-
-### Card Configuration Example
+### 7-Day Schedule Calendar
 
 ```yaml
 type: custom:schedule-preset-card
-title: "1st Floor Climate Schedule"
-entity: schedule.first_floor_occupied
+title: "1st Floor Schedule"
+default_schedule: schedule.first_floor_occupied
+temperature_unit: "°F"     # Optional: "°F" or "°C" (default: "°F")
+step_size: 15              # Snapping interval in minutes (default: 15)
+min_deadband: 2            # Minimum degrees between heat and cool (default: 2)
+```
+
+### 1-Day Climate Preset Timeline
+
+```yaml
+type: custom:climate-preset-timeline
+title: "Living Room Timeline"
+entity: climate.living_room_space
 temperature_unit: "°F"     # Optional: "°F" or "°C" (default: "°F")
 step_size: 15              # Snapping interval in minutes (default: 15)
 min_deadband: 2            # Minimum degrees between heat and cool (default: 2)
@@ -51,20 +71,29 @@ min_deadband: 2            # Minimum degrees between heat and cool (default: 2)
 
 ---
 
-## Development & Local Preview
+## Development & Building
 
-To test or develop locally without requiring a live Home Assistant server:
+Install dependencies and start the local Vite development server:
 
 ```bash
-cd schedule-preset-card
+cd frontend
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` to interact with the mock schedule preview.
+Run TypeScript type-checking:
+```bash
+npm run typecheck
+```
 
-To build the production bundle:
+Build the production bundle:
 ```bash
 npm run build
 ```
-Outputs to `dist/schedule-preset-card.js`.
+Outputs to `dist/hvac-fusion-cards.js` and automatically copies to `custom_components/hvac_fusion/frontend/`.
+
+---
+
+## Acknowledgments & Attribution
+
+The visual presentation, dual-setpoint interaction, and weekly calendar layout in `schedule-preset-card` are adapted from and inspired by the excellent work of **[arozoire](https://github.com/arozoire)** in [`schedule_creator`](https://github.com/arozoire/schedule_creator) and `weekly-schedule-card` (MIT Licensed), re-engineered here to operate natively with Home Assistant's built-in `schedule.*` helper entities and Core WebSocket APIs.
