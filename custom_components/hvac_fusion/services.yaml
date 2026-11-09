@@ -13,3 +13,36 @@ get_report:
       diag:
         name: Diagnostics
         description: Diagnostic reasons behind decisions
+
+acquire_schedule_lock:
+  name: Acquire Schedule Edit Lock
+  description: Signals to external automations and tools that consult this lock that a human is currently editing a schedule.
+  fields:
+    schedule_id:
+      name: Schedule ID
+      description: The ID of the schedule being edited.
+      required: true
+      example: schedule.first_floor_occupied
+      selector:
+        text:
+    duration:
+      name: Lock Duration (Seconds)
+      description: How long before the lock expires automatically if not renewed.
+      default: 300
+      selector:
+        number:
+          min: 30
+          max: 3600
+          unit_of_measurement: seconds
+
+release_schedule_lock:
+  name: Release Schedule Edit Lock
+  description: Releases the human edit lock on a schedule.
+  fields:
+    schedule_id:
+      name: Schedule ID
+      description: The ID of the schedule being unlocked.
+      required: true
+      example: schedule.first_floor_occupied
+      selector:
+        text:

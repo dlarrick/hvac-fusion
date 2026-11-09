@@ -17,6 +17,7 @@ HVAC Fusion uses the core physics and arbitration engine from [`hvac-crossover`]
 - **Arbitration**: Manages multi-split outdoor units (ODUs) to prevent conflicting simultaneous heating/cooling demands across indoor units (IDUs).
 - **Recovery Acceleration**: Detects large temperature differentials or recovery calls to enlist high-capacity auxiliary heat (such as condensing or standard boilers).
 - **Virtual Space Climate Entities**: Exposes unified climate entities to Home Assistant, controlling multiple underlying climate entities per space, for intuitive schedule and thermostat card control (`heat_cool`, `heat`, `cool`, `off`).
+- **Custom Lovelace Schedule & Timeline Cards**: Ships with built-in dashboard cards (`schedule-preset-card` and `climate-preset-timeline`) for visual 7-day and 1-day schedule creation and editing, plus real-time preset tracking with human edit lock coordination.
 - **Flexible Native Schedule Integration**: Follows native Home Assistant `schedule` entities via customizable preset modes.
 - **Monitoring / Shadow Mode**: Supports a `control_enabled: false` mode with diagnostic reporting services to validate behavior before commanding physical equipment.
 
@@ -29,6 +30,43 @@ The basic principle of HVAC Fusion:
 - Each producer is powered by an energy (fuel) source with an associated **tariff** cost per unit of energy.
 
 HVAC Fusion then decides, moment to moment, which emitter is most cost-effectively capable of satisfying that demand.
+
+## Frontend Dashboard Cards
+
+HVAC Fusion automatically bundles and serves two companion Lovelace cards for visualizing and editing climate schedules directly on your dashboards. No separate HACS install or manual resource entry is required—the integration's built-in loader serves and content-versions the bundle automatically.
+
+```yaml
+# Example Lovelace dashboard configuration
+type: vertical-stack
+cards:
+  # 1-day horizontal timeline tracking a space's active climate preset
+  - type: custom:climate-preset-timeline
+    entity: climate.room1_space
+    title: Room 1 Timeline
+
+  # 7-day interactive weekly schedule calendar
+  - type: custom:schedule-preset-card
+    title: Heating & Cooling Schedules
+    default_schedule: schedule.first_floor_occupied
+```
+
+### 1. `schedule-preset-card` (7-Day Schedule Calendar)
+An interactive 7-day vertical timeline calendar designed to visualize and edit native Home Assistant `schedule.*` entities with multi-mode preset payloads (`hvac_mode`, `heat_to`, `cool_to`).
+* **Visual Editing**: Drag to create new blocks, drag block bodies to shift times, and drag top/bottom edge handles to adjust start and end times in 15-minute increments.
+* **Block Actions**: Click any block to edit temperatures and HVAC mode, split a block into two, or copy blocks across weekdays, weekends, or all days.
+* **Schedule Switcher**: A dropdown menu lets you quickly switch between different configured schedules on the fly.
+* **Compact & Full Views**: Toggle between a compact `280px` overview (4-hour time marks) and a full `580px` detailed editor (2-hour time marks).
+* **Live Synchronization**: Real-time cross-card bus and background WebSocket polling ensure edits made anywhere—in another card, another browser tab, or via external automations and services—are reflected without needing a page refresh.
+
+### 2. `climate-preset-timeline` (1-Day Climate Preset Tracker)
+A horizontal daily timeline strip designed to sit on space control dashboards and track what the climate entity is running right now.
+* **Live "NOW" Needle**: An active red needle indicates the exact current time of day and updates every 30 seconds.
+* **Dynamic Preset Tracking**: Automatically reads the climate entity's current preset and active schedule. When the space is in manual mode (via manual temperature adjustment or selecting the `manual` preset), the card displays a yellow `⏸️ Manual Hold Active` banner.
+* **Day Navigation**: Flip between days (`‹ Previous Day` / `Next Day ›`) to inspect upcoming routines.
+* **Inline Day Editing**: Click `[ ✎ Edit ]` to edit, adjust, or insert preset blocks directly from the 1-day strip without navigating to settings.
+
+### Schedule Edit Mutual Exclusion Locks
+When editing schedules in either card, clicking `[ ✎ Edit ]` invokes the `hvac_fusion.acquire_schedule_lock` service (setting a 300s TTL lock and exposing `schedule_editing: true` on the space's climate entity). This signals to external automations and tools that consult this lock to pause automated schedule adjustments while a human is actively making edits. When finished, clicking `[ ✓ Done ]` releases the lock. Both cards use progressive enhancement—if used standalone without HVAC Fusion, the cards operate cleanly without errors.
 
 ## Installation
 
@@ -163,6 +201,10 @@ A dedicated status sensor is created for each piece of heating or cooling equipm
   * `estimated_return_temp_f`: Estimated return water temperature (for modulating condensing boilers).
   * `estimated_efficiency`: Current estimated operating combustion efficiency based on load and return water temperature.
   * `condensing_state`: Flue gas condensing state (`condensing` vs. `dry`).
+
+## Acknowledgments & Attribution
+
+The visual presentation, dual-setpoint interaction, and weekly calendar layout in `schedule-preset-card` are adapted from and inspired by the excellent work of **[arozoire](https://github.com/arozoire)** in [`schedule_creator`](https://github.com/arozoire/schedule_creator) and `weekly-schedule-card` (MIT Licensed), re-engineered here to operate natively with Home Assistant's built-in `schedule.*` helper entities and Core WebSocket APIs.
 
 ## License
 
