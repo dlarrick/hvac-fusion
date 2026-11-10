@@ -195,26 +195,37 @@ export function isForeignSchedule(scheduleItem: HAScheduleItem | undefined): boo
   return climateBlocks === 0;
 }
 
-export function findScheduleInList(
+export async function findScheduleInList(
   list: HAScheduleItem[],
   entityId: string | null | undefined,
   hass?: HomeAssistant | null
-): HAScheduleItem | undefined {
+): Promise<HAScheduleItem | undefined> {
   if (!list || list.length === 0 || !entityId) return undefined;
 
   const fullEntityId = entityId.startsWith('schedule.') ? entityId : `schedule.${entityId}`;
   const shortId = entityId.replace(/^schedule\./, '');
 
-  // 1. Look up in Home Assistant Entity Registry: entity_id -> unique_id (= storage item id)
-  const entities = (hass as any)?.entities as Record<string, any> | undefined;
-  if (entities && entities[fullEntityId]?.unique_id) {
-    const storageId = entities[fullEntityId].unique_id;
-    const match = list.find((s) => s.id === storageId);
-    if (match) return match;
+  // 1. Direct match (if storage ID matches entity_id or shortId)
+  const direct = list.find((s) => s.id === fullEntityId || s.id === shortId);
+  if (direct) return direct;
+
+  // 2. Look up in Home Assistant Entity Registry via WebSocket: entity_id -> unique_id (= storage item id)
+  if (hass) {
+    try {
+      const entry = await hass.callWS<{ unique_id?: string }>({
+        type: 'config/entity_registry/get',
+        entity_id: fullEntityId
+      });
+      if (entry?.unique_id) {
+        const match = list.find((s) => s.id === entry.unique_id);
+        if (match) return match;
+      }
+    } catch {
+      // Entity not in registry (e.g. YAML schedule)
+    }
   }
 
-  // 2. Direct match where storage ID matches entity_id or shortId
-  return list.find((s) => s.id === fullEntityId || s.id === shortId);
+  return undefined;
 }
 
 export function convertToInternalBlocks(
