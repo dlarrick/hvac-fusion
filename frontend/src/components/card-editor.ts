@@ -51,6 +51,18 @@ export class SchedulePresetCardEditor extends LitElement {
       border-color: var(--primary-color, #38bdf8);
     }
 
+    .form-select {
+      color-scheme: dark;
+    }
+    .form-select optgroup {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--secondary-text-color, #9ca3af);
+    }
+    .form-select option {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--primary-text-color, #ffffff);
+    }
+
     .form-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;

@@ -12,6 +12,8 @@ import {
   convertToHABlocks,
   convertToInternalBlocks,
   fetchScheduleList,
+  findScheduleInList,
+  isForeignSchedule,
   subscribeScheduleUpdates,
   updateHASchedule
 } from './services/ha-schedule';
@@ -43,6 +45,9 @@ export class ClimatePresetTimeline extends LitElement {
   @state() private currentPresetMode = '';
   @state() private isManual = false;
   @state() private isEditMode = false;
+  @state() private isYamlSchedule = false;
+  @state() private isForeign = false;
+  @state() private scheduleNotFound = false;
   private _lastLoadedScheduleHash = '';
 
   @state() private blocksByDay: Record<ScheduleDay, InternalBlock[]> = {
@@ -192,6 +197,16 @@ export class ClimatePresetTimeline extends LitElement {
       color: #eab308;
       border-color: rgba(234, 179, 8, 0.3);
     }
+    .yaml-badge {
+      font-size: 0.72rem;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(234, 179, 8, 0.15);
+      color: #eab308;
+      border: 1px solid rgba(234, 179, 8, 0.3);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
 
     .header-controls {
       display: flex;
@@ -307,6 +322,9 @@ export class ClimatePresetTimeline extends LitElement {
       pointer-events: none;
       z-index: 15;
     }
+    .manual-overlay.error {
+      color: #f87171;
+    }
 
     /* Horizontal Grid Ticks (every 4 hours) */
     .time-grid-line {
@@ -353,6 +371,22 @@ export class ClimatePresetTimeline extends LitElement {
       min-height: 0;
     }
 
+    .band-generic {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.70rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      background: rgba(100, 116, 139, 0.35);
+      border: 1px dashed rgba(148, 163, 184, 0.7);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      min-height: 0;
+    }
+
     /* Horizontal Resize Handles (Left / Right edges) */
     .h-resize-handle {
       position: absolute;
@@ -378,8 +412,8 @@ export class ClimatePresetTimeline extends LitElement {
       top: 0;
       bottom: 0;
       width: 2px;
-      background: #f43f5e;
-      box-shadow: 0 0 8px rgba(244, 63, 94, 0.9);
+      background: #ffffff;
+      box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.7), 0 0 6px 1px rgba(244, 63, 94, 0.85);
       z-index: 30;
       pointer-events: none;
     }
@@ -393,7 +427,8 @@ export class ClimatePresetTimeline extends LitElement {
       height: 0;
       border-left: 4px solid transparent;
       border-right: 4px solid transparent;
-      border-top: 5px solid #f43f5e;
+      border-top: 5px solid #ffffff;
+      filter: drop-shadow(0 0 2px rgba(244, 63, 94, 0.9));
     }
 
     /* Time Axis Labels (Under track) */
@@ -490,7 +525,7 @@ export class ClimatePresetTimeline extends LitElement {
 
     // Inspect the bound entity
     const targetEntityId = this.config.entity;
-    let resolvedScheduleId: string | null = null;
+    let scheduleEntityId: string | null = null;
 
     if (targetEntityId) {
       const stateObj = this.hass.states[targetEntityId];
@@ -507,13 +542,13 @@ export class ClimatePresetTimeline extends LitElement {
           const presetsMap = attrs.presets || {};
 
           if (activeSched && typeof activeSched === 'string') {
-            resolvedScheduleId = activeSched.replace('schedule.', '');
+            scheduleEntityId = activeSched;
           } else if (presetsMap[this.currentPresetMode]) {
-            resolvedScheduleId = String(presetsMap[this.currentPresetMode]).replace('schedule.', '');
+            scheduleEntityId = String(presetsMap[this.currentPresetMode]);
           }
         }
       } else if (targetEntityId.startsWith('schedule.')) {
-        resolvedScheduleId = targetEntityId.replace('schedule.', '');
+        scheduleEntityId = targetEntityId;
       }
     }
 
@@ -521,6 +556,9 @@ export class ClimatePresetTimeline extends LitElement {
       this.activeScheduleId = '';
       this._lastLoadedScheduleHash = '';
       this.isEditMode = false;
+      this.isYamlSchedule = false;
+      this.isForeign = false;
+      this.scheduleNotFound = false;
       this.blocksByDay = {
         monday: [],
         tuesday: [],
@@ -533,24 +571,60 @@ export class ClimatePresetTimeline extends LitElement {
       return;
     }
 
-    if (!resolvedScheduleId && list.length > 0) {
-      resolvedScheduleId = list[0].id;
+    // Look up schedule strictly by entity_id
+    let item: HAScheduleItem | undefined;
+    if (scheduleEntityId) {
+      item = findScheduleInList(list, scheduleEntityId, this.hass);
+    } else if (list.length > 0) {
+      item = list[0];
     }
 
-    if (resolvedScheduleId) {
-      const item = list.find((s) => s.id === resolvedScheduleId);
-      if (item && !this.isSaving && !this.dragAction && !this.activeEditingBlock) {
-        const itemHash = JSON.stringify(item);
-        if (
-          forceReload ||
-          resolvedScheduleId !== this.activeScheduleId ||
-          itemHash !== this._lastLoadedScheduleHash
-        ) {
-          this.activeScheduleId = resolvedScheduleId;
-          this._lastLoadedScheduleHash = itemHash;
-          this.blocksByDay = convertToInternalBlocks(item);
-        }
+    if (item && !this.isSaving && !this.dragAction && !this.activeEditingBlock) {
+      this.isYamlSchedule = false;
+      this.isForeign = isForeignSchedule(item);
+      this.scheduleNotFound = false;
+
+      if (this.isForeign && this.isEditMode) {
+        this.isEditMode = false;
+        this.sendLockSignal(false);
       }
+
+      const itemHash = JSON.stringify(item);
+      if (
+        forceReload ||
+        item.id !== this.activeScheduleId ||
+        itemHash !== this._lastLoadedScheduleHash
+      ) {
+        this.activeScheduleId = item.id;
+        this._lastLoadedScheduleHash = itemHash;
+        this.blocksByDay = convertToInternalBlocks(item);
+      }
+    } else if (scheduleEntityId && !item) {
+      // Check if entity exists in hass.states (e.g. YAML schedule)
+      const fullEntityId = scheduleEntityId.startsWith('schedule.')
+        ? scheduleEntityId
+        : `schedule.${scheduleEntityId}`;
+      const stateObj = this.hass.states[fullEntityId];
+      if (stateObj) {
+        this.isYamlSchedule = true;
+        this.isForeign = false;
+        this.scheduleNotFound = false;
+      } else {
+        this.isYamlSchedule = false;
+        this.isForeign = false;
+        this.scheduleNotFound = true;
+      }
+      this.activeScheduleId = '';
+      this.isEditMode = false;
+      this.blocksByDay = {
+        monday: [],
+        tuesday: [],
+        wednesday: [],
+        thursday: [],
+        friday: [],
+        saturday: [],
+        sunday: []
+      };
     }
   }
 
@@ -567,7 +641,7 @@ export class ClimatePresetTimeline extends LitElement {
   }
 
   private toggleEditMode() {
-    if (this.isManual) return;
+    if (this.isManual || this.isYamlSchedule || this.isForeign || this.scheduleNotFound) return;
     this.isEditMode = !this.isEditMode;
 
     if (this.isEditMode) {
@@ -921,6 +995,11 @@ export class ClimatePresetTimeline extends LitElement {
                   </span>
                 `
               : ''}
+            ${this.isYamlSchedule
+              ? html`<span class="yaml-badge" title="Defined in YAML: edits must be made in configuration.yaml">YAML (Read Only)</span>`
+              : this.isForeign
+              ? html`<span class="yaml-badge" title="Non-HVAC schedule data payloads cannot be edited in this card">Non-HVAC (Read Only)</span>`
+              : ''}
           </div>
 
           <!-- Controls: Day Navigation + Edit Toggle -->
@@ -936,8 +1015,18 @@ export class ClimatePresetTimeline extends LitElement {
             <button
               class="edit-toggle-btn ${this.isEditMode ? 'active' : ''}"
               @click=${this.toggleEditMode}
-              ?disabled=${this.isManual}
-              title=${this.isManual ? 'Manual mode active (no schedule to edit)' : this.isEditMode ? 'Finish editing' : 'Enable editing'}
+              ?disabled=${this.isManual || this.isYamlSchedule || this.isForeign || this.scheduleNotFound}
+              title=${this.isManual
+                ? 'Manual mode active (no schedule to edit)'
+                : this.isYamlSchedule
+                ? 'YAML schedules are read-only'
+                : this.isForeign
+                ? 'Non-HVAC schedules are read-only'
+                : this.scheduleNotFound
+                ? 'Schedule entity not found'
+                : this.isEditMode
+                ? 'Finish editing'
+                : 'Enable editing'}
             >
               ${this.isEditMode ? '✓ Done' : '✎ Edit'}
             </button>
@@ -951,11 +1040,29 @@ export class ClimatePresetTimeline extends LitElement {
           @pointermove=${this.handleTrackPointerMove}
           @pointerup=${this.handleTrackPointerUp}
         >
-          <!-- Manual Hold Overlay -->
+          <!-- Status Overlays -->
           ${this.isManual
             ? html`
                 <div class="manual-overlay">
                   <span>⏸️ Manual Hold Active — No schedule running</span>
+                </div>
+              `
+            : this.isYamlSchedule
+            ? html`
+                <div class="manual-overlay">
+                  <span>📄 YAML Schedule Active — Read-only</span>
+                </div>
+              `
+            : this.isForeign
+            ? html`
+                <div class="manual-overlay">
+                  <span>⚠️ Non-HVAC Schedule Active — Read-only</span>
+                </div>
+              `
+            : this.scheduleNotFound
+            ? html`
+                <div class="manual-overlay error">
+                  <span>⚠️ Schedule entity not found</span>
                 </div>
               `
             : ''}
@@ -977,7 +1084,9 @@ export class ClimatePresetTimeline extends LitElement {
             const coolText = getCoolTextColor(block.cool_to, unit);
 
             const tooltip =
-              block.hvac_mode === 'heat_cool'
+              block.isGeneric
+                ? `Non-Climate Block: No HVAC targets (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`
+                : block.hvac_mode === 'heat_cool'
                 ? `Dual: Heat ${block.heat_to}°, Cool ${block.cool_to}° (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`
                 : `${block.hvac_mode} (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`;
 
@@ -988,7 +1097,13 @@ export class ClimatePresetTimeline extends LitElement {
                 title=${tooltip}
                 @click=${(e: MouseEvent) => this.handleBlockClick(e, block)}
               >
-                ${block.hvac_mode === 'heat_cool'
+                ${block.isGeneric
+                  ? html`
+                      <div class="band-generic">
+                        ${widthPct > 8 ? 'No HVAC' : ''}
+                      </div>
+                    `
+                  : block.hvac_mode === 'heat_cool'
                   ? html`
                       <div class="band-cool" style="background-color: ${coolColor}; color: ${coolText};">
                         ${widthPct > 5 ? `${block.cool_to}°` : ''}

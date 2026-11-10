@@ -76,6 +76,7 @@ export interface InternalBlock {
   hvac_mode: 'heat_cool' | 'heat' | 'cool' | 'off';
   heat_to: number;
   cool_to: number;
+  isGeneric?: boolean;
   originalData?: Record<string, any>;
 }
 

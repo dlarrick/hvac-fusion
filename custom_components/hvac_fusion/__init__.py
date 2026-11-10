@@ -613,12 +613,36 @@ class HvacFusionManager:
     def register_space_entity(self, space_id: str, entity: Any) -> None:
         self.space_entities[space_id] = entity
 
+    def _resolve_schedule_keys(self, schedule_id: str) -> set[str]:
+        """Resolve all aliases (entity_id slug and unique_id) for a schedule."""
+        keys = {schedule_id, schedule_id.removeprefix("schedule.")}
+        try:
+            from homeassistant.helpers import entity_registry as er
+
+            ent_reg = er.async_get(self.hass)
+            entry = ent_reg.async_get(
+                f"schedule.{schedule_id.removeprefix('schedule.')}"
+            )
+            if entry and entry.unique_id:
+                keys.add(entry.unique_id)
+            else:
+                e_id = ent_reg.async_get_entity_id("schedule", "schedule", schedule_id)
+                if e_id:
+                    keys.add(e_id)
+                    keys.add(e_id.removeprefix("schedule."))
+        except Exception:
+            pass
+        return keys
+
     def acquire_schedule_lock(self, schedule_id: str, duration: int = 300) -> None:
         """Acquire a temporary edit lock on a schedule for human editing."""
         import time
 
+        exp = time.time() + duration
+        for key in self._resolve_schedule_keys(schedule_id):
+            self._schedule_locks[key] = exp
+
         schedule_key = schedule_id.removeprefix("schedule.")
-        self._schedule_locks[schedule_key] = time.time() + duration
         self._notify_schedule_lock_change()
         self.hass.bus.async_fire(
             "hvac_fusion_schedule_lock_acquired",
@@ -627,27 +651,28 @@ class HvacFusionManager:
 
     def release_schedule_lock(self, schedule_id: str) -> None:
         """Release a human edit lock on a schedule."""
+        for key in self._resolve_schedule_keys(schedule_id):
+            self._schedule_locks.pop(key, None)
+
         schedule_key = schedule_id.removeprefix("schedule.")
-        if schedule_key in self._schedule_locks:
-            del self._schedule_locks[schedule_key]
-            self._notify_schedule_lock_change()
-            self.hass.bus.async_fire(
-                "hvac_fusion_schedule_lock_released",
-                {"schedule_id": schedule_key},
-            )
+        self._notify_schedule_lock_change()
+        self.hass.bus.async_fire(
+            "hvac_fusion_schedule_lock_released",
+            {"schedule_id": schedule_key},
+        )
 
     def is_schedule_locked(self, schedule_id: str) -> bool:
         """Check if a schedule is currently locked by a human editor."""
         import time
 
-        schedule_key = schedule_id.removeprefix("schedule.")
-        expires_at = self._schedule_locks.get(schedule_key)
-        if expires_at is None:
-            return False
-        if time.time() > expires_at:
-            del self._schedule_locks[schedule_key]
-            return False
-        return True
+        now = time.time()
+        for key in self._resolve_schedule_keys(schedule_id):
+            exp = self._schedule_locks.get(key)
+            if exp is not None:
+                if now <= exp:
+                    return True
+                self._schedule_locks.pop(key, None)
+        return False
 
     def _notify_schedule_lock_change(self) -> None:
         """Notify registered space entities to update their state attributes."""

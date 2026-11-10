@@ -11,6 +11,9 @@ Bundles two companion cards in a single unified bundle (`dist/hvac-fusion-cards.
 ## Features
 
 ### 1. 7-Day Schedule Calendar (`custom:schedule-preset-card`)
+
+<img src="../docs/images/schedule_preset_card.png" alt="7-Day Schedule Calendar Card" width="430">
+
 * **Native HA WebSocket Backend**: Reads and updates native `schedule.*` entities directly using Home Assistant's Core `schedule/list` and `schedule/update` WebSocket APIs—no custom daemons or non-standard storage engines required.
 * **Dual Setpoint Visualization**:
   * **Cooling Scale (Blue)**: Colder targets are deeper azure/navy; warmer targets are soft ice blue.
@@ -33,6 +36,9 @@ Bundles two companion cards in a single unified bundle (`dist/hvac-fusion-cards.
 * **Compact / Full View Toggle**: Switch between compact `280px` overview (4-hour time marks) and full `580px` view (2-hour marks).
 
 ### 2. 1-Day Climate Preset Tracker (`custom:climate-preset-timeline`)
+
+<img src="../docs/images/climate_preset_timeline.png" alt="Climate Card with Companion Preset Timeline" width="430">
+
 * **Live "NOW" Needle**: An active red needle indicates current time of day, updating every 30 seconds.
 * **Active Preset Tracking**: Reads the target space's climate entity (`climate.<space_id>_space`) and displays the active preset badge.
 * **Manual Hold Banner**: Displays `⏸️ Manual Hold Active — No schedule running` whenever the space is in manual mode (via manual setpoint adjustment or selecting the `manual` preset).

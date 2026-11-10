@@ -52,6 +52,9 @@ cards:
 
 ### 1. `schedule-preset-card` (7-Day Schedule Calendar)
 An interactive 7-day vertical timeline calendar designed to visualize and edit native Home Assistant `schedule.*` entities with multi-mode preset payloads (`hvac_mode`, `heat_to`, `cool_to`).
+
+<img src="docs/images/schedule_preset_card.png" alt="7-Day Schedule Calendar Card" width="430">
+
 * **Visual Editing**: Drag to create new blocks, drag block bodies to shift times, and drag top/bottom edge handles to adjust start and end times in 15-minute increments.
 * **Block Actions**: Click any block to edit temperatures and HVAC mode, split a block into two, or copy blocks across weekdays, weekends, or all days.
 * **Schedule Switcher**: A dropdown menu lets you quickly switch between different configured schedules on the fly.
@@ -60,6 +63,9 @@ An interactive 7-day vertical timeline calendar designed to visualize and edit n
 
 ### 2. `climate-preset-timeline` (1-Day Climate Preset Tracker)
 A horizontal daily timeline strip designed to sit on space control dashboards and track what the climate entity is running right now.
+
+<img src="docs/images/climate_preset_timeline.png" alt="Climate Card with Companion Preset Timeline" width="430">
+
 * **Live "NOW" Needle**: An active red needle indicates the exact current time of day and updates every 30 seconds.
 * **Dynamic Preset Tracking**: Automatically reads the climate entity's current preset and active schedule. When the space is in manual mode (via manual temperature adjustment or selecting the `manual` preset), the card displays a yellow `⏸️ Manual Hold Active` banner.
 * **Day Navigation**: Flip between days (`‹ Previous Day` / `Next Day ›`) to inspect upcoming routines.

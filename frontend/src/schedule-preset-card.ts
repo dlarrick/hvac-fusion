@@ -13,6 +13,8 @@ import {
   convertToHABlocks,
   convertToInternalBlocks,
   fetchScheduleList,
+  findScheduleInList,
+  isForeignSchedule,
   subscribeScheduleUpdates,
   updateHASchedule
 } from './services/ha-schedule';
@@ -47,6 +49,7 @@ export class SchedulePresetCard extends LitElement {
   @state() private isYamlSchedule = false;
   @state() private isCompact = false;
   @state() private isEditMode = false;
+  @state() private isForeign = false;
 
   // Interaction tracking for dragging & resizing
   private dragAction: {
@@ -138,8 +141,9 @@ export class SchedulePresetCard extends LitElement {
     }
 
     .schedule-select {
+      color-scheme: dark;
       background: rgba(255, 255, 255, 0.08);
-      color: #fff;
+      color: var(--primary-text-color, #ffffff);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 8px;
       padding: 6px 10px;
@@ -150,6 +154,29 @@ export class SchedulePresetCard extends LitElement {
     .schedule-select:focus {
       outline: none;
       border-color: var(--primary-color, #3b82f6);
+    }
+    .schedule-select optgroup {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--secondary-text-color, #9ca3af);
+      font-weight: 600;
+    }
+    .schedule-select option {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--primary-text-color, #ffffff);
+      font-weight: normal;
+    }
+
+    .non-climate-notice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      background: rgba(100, 116, 139, 0.2);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 6px;
+      padding: 6px 10px;
+      margin-top: 10px;
     }
 
     .edit-toggle-btn {
@@ -377,6 +404,29 @@ export class SchedulePresetCard extends LitElement {
       font-weight: 600;
     }
 
+    /* Generic non-climate block */
+    .cell-generic {
+      background: rgba(100, 116, 139, 0.35) !important;
+      border: 1px dashed rgba(148, 163, 184, 0.7) !important;
+      color: var(--secondary-text-color, #94a3b8) !important;
+      display: flex;
+    }
+    .cell-generic:hover {
+      background: rgba(100, 116, 139, 0.5) !important;
+      border-color: #cbd5e1 !important;
+    }
+    .generic-cell-content {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
     /* Carve preview overlay */
     .carve-preview {
       position: absolute;
@@ -592,7 +642,7 @@ export class SchedulePresetCard extends LitElement {
   }
 
   private toggleEditMode() {
-    if (this.isYamlSchedule) return;
+    if (this.isYamlSchedule || this.isForeign) return;
     this.isEditMode = !this.isEditMode;
 
     if (this.isEditMode) {
@@ -641,9 +691,13 @@ export class SchedulePresetCard extends LitElement {
     }
 
     if (!targetId || !list.some((s) => s.id === targetId)) {
-      targetId = this.config.entity || null;
-      if (targetId && targetId.startsWith('schedule.')) {
-        targetId = targetId.replace('schedule.', '');
+      if (this.config.entity) {
+        const found = findScheduleInList(list, this.config.entity, this.hass);
+        if (found) {
+          targetId = found.id;
+        } else {
+          targetId = this.config.entity.replace(/^schedule\./, '');
+        }
       }
     }
 
@@ -672,8 +726,14 @@ export class SchedulePresetCard extends LitElement {
       this._lastLoadedScheduleHash = JSON.stringify(item);
       this.blocksByDay = convertToInternalBlocks(item);
       this.isYamlSchedule = false;
+      this.isForeign = isForeignSchedule(item);
+      if (this.isForeign && this.isEditMode) {
+        this.isEditMode = false;
+        this.sendLockSignal(false);
+      }
     } else {
       this.isYamlSchedule = true;
+      this.isForeign = false;
     }
   }
 
@@ -1089,6 +1149,32 @@ export class SchedulePresetCard extends LitElement {
     const estimatedWidthPx = 60;
     const orientation = getSplitOrientation(estimatedWidthPx, heightPx);
 
+    if (block.isGeneric) {
+      const genericTooltip = `Non-Climate Block: No HVAC targets (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`;
+      return html`
+        <div
+          class="schedule-cell cell-generic"
+          style="top: ${startPct}%; height: ${heightPct}%;"
+          title=${genericTooltip}
+          @click=${(e: MouseEvent) => this.handleBlockClick(e, block)}
+        >
+          <div class="generic-cell-content">
+            ${heightPx >= 28 ? 'No HVAC' : ''}
+          </div>
+          <div
+            class="resize-handle top"
+            @click=${(e: MouseEvent) => e.stopPropagation()}
+            @pointerdown=${(e: PointerEvent) => this.handleResizePointerDown(e, block, 'resize-start')}
+          ></div>
+          <div
+            class="resize-handle bottom"
+            @click=${(e: MouseEvent) => e.stopPropagation()}
+            @pointerdown=${(e: PointerEvent) => this.handleResizePointerDown(e, block, 'resize-end')}
+          ></div>
+        </div>
+      `;
+    }
+
     if (block.hvac_mode === 'off') {
       return html`
         <div
@@ -1225,6 +1311,8 @@ export class SchedulePresetCard extends LitElement {
             <h2 class="card-title" title="${title}">${title}</h2>
             ${this.isYamlSchedule
               ? html`<span class="yaml-badge" title="Defined in YAML: edits must be made in configuration.yaml">YAML (Read Only)</span>`
+              : this.isForeign
+              ? html`<span class="yaml-badge" title="Non-HVAC schedule data payloads cannot be edited in this card">Non-HVAC (Read Only)</span>`
               : ''}
           </div>
 
@@ -1232,13 +1320,41 @@ export class SchedulePresetCard extends LitElement {
             ${this.schedules.length > 0
               ? html`
                   <select class="schedule-select" @change=${this.handleScheduleSelected}>
-                    ${this.schedules.map(
-                      (s) => html`
-                        <option value=${s.id} ?selected=${s.id === this.selectedScheduleId}>
-                          ${s.name || s.id}
-                        </option>
-                      `
-                    )}
+                    ${(() => {
+                      const climateSchedules = this.schedules.filter((s) => !isForeignSchedule(s));
+                      const foreignSchedules = this.schedules.filter((s) => isForeignSchedule(s));
+
+                      if (foreignSchedules.length > 0 && climateSchedules.length > 0) {
+                        return html`
+                          <optgroup label="Climate Schedules">
+                            ${climateSchedules.map(
+                              (s) => html`
+                                <option value=${s.id} ?selected=${s.id === this.selectedScheduleId}>
+                                  ${s.name || s.id}
+                                </option>
+                              `
+                            )}
+                          </optgroup>
+                          <optgroup label="Other Schedules">
+                            ${foreignSchedules.map(
+                              (s) => html`
+                                <option value=${s.id} ?selected=${s.id === this.selectedScheduleId}>
+                                  ${s.name || s.id} (non-HVAC)
+                                </option>
+                              `
+                            )}
+                          </optgroup>
+                        `;
+                      }
+
+                      return this.schedules.map(
+                        (s) => html`
+                          <option value=${s.id} ?selected=${s.id === this.selectedScheduleId}>
+                            ${s.name || s.id}${isForeignSchedule(s) ? ' (non-HVAC)' : ''}
+                          </option>
+                        `
+                      );
+                    })()}
                   </select>
                 `
               : html`<span style="font-size: 0.85rem; color: var(--secondary-text-color, #a1a1aa);">${currentScheduleName}</span>`}
@@ -1247,8 +1363,8 @@ export class SchedulePresetCard extends LitElement {
             <button
               class="edit-toggle-btn ${this.isEditMode ? 'active' : ''}"
               @click=${this.toggleEditMode}
-              ?disabled=${this.isYamlSchedule}
-              title=${this.isYamlSchedule ? 'YAML schedules are read-only' : this.isEditMode ? 'Finish editing' : 'Enable editing'}
+              ?disabled=${this.isYamlSchedule || this.isForeign}
+              title=${this.isYamlSchedule ? 'YAML schedules are read-only' : this.isForeign ? 'Non-HVAC schedules are read-only' : this.isEditMode ? 'Finish editing' : 'Enable editing'}
             >
               ${this.isEditMode ? '✓ Done' : '✎ Edit'}
             </button>
