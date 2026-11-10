@@ -160,6 +160,63 @@ export async function updateHASchedule(
   notifyScheduleUpdated(scheduleId);
 }
 
+export function isClimatePayload(data: any): boolean {
+  if (!data || typeof data !== 'object') return false;
+  return (
+    data.hvac_mode !== undefined ||
+    data.mode !== undefined ||
+    data.heat_to !== undefined ||
+    data.cool_to !== undefined ||
+    data.target_temp_low !== undefined ||
+    data.target_temp_high !== undefined ||
+    data.temperature !== undefined
+  );
+}
+
+export function isForeignSchedule(scheduleItem: HAScheduleItem | undefined): boolean {
+  if (!scheduleItem) return false;
+  let totalBlocks = 0;
+  let climateBlocks = 0;
+
+  for (const day of DAYS_OF_WEEK) {
+    const rawBlocks = scheduleItem[day] || [];
+    totalBlocks += rawBlocks.length;
+    for (const b of rawBlocks) {
+      if (isClimatePayload(b.data)) {
+        climateBlocks++;
+      }
+    }
+  }
+
+  // A brand new, 100% blank schedule has 0 blocks and is NOT foreign (fully editable)
+  if (totalBlocks === 0) return false;
+
+  // Has entries, but none of them contain climate/HVAC payloads -> foreign
+  return climateBlocks === 0;
+}
+
+export function findScheduleInList(
+  list: HAScheduleItem[],
+  entityId: string | null | undefined,
+  hass?: HomeAssistant | null
+): HAScheduleItem | undefined {
+  if (!list || list.length === 0 || !entityId) return undefined;
+
+  const fullEntityId = entityId.startsWith('schedule.') ? entityId : `schedule.${entityId}`;
+  const shortId = entityId.replace(/^schedule\./, '');
+
+  // 1. Look up in Home Assistant Entity Registry: entity_id -> unique_id (= storage item id)
+  const entities = (hass as any)?.entities as Record<string, any> | undefined;
+  if (entities && entities[fullEntityId]?.unique_id) {
+    const storageId = entities[fullEntityId].unique_id;
+    const match = list.find((s) => s.id === storageId);
+    if (match) return match;
+  }
+
+  // 2. Direct match where storage ID matches entity_id or shortId
+  return list.find((s) => s.id === fullEntityId || s.id === shortId);
+}
+
 export function convertToInternalBlocks(
   scheduleItem: HAScheduleItem | undefined
 ): Record<ScheduleDay, InternalBlock[]> {
@@ -179,7 +236,9 @@ export function convertToInternalBlocks(
     const rawBlocks = scheduleItem[day] || [];
     result[day] = rawBlocks.map((b, index) => {
       const data = b.data || {};
-      const mode = (data.hvac_mode || data.mode || 'heat_cool').toLowerCase() as
+      const hasClimate = isClimatePayload(data);
+
+      const mode = (data.hvac_mode || data.mode || (hasClimate ? 'heat_cool' : 'off')).toLowerCase() as
         | 'heat_cool'
         | 'heat'
         | 'cool'
@@ -203,6 +262,7 @@ export function convertToInternalBlocks(
         hvac_mode: ['heat_cool', 'heat', 'cool', 'off'].includes(mode) ? mode : 'heat_cool',
         heat_to: Number(heat),
         cool_to: Number(cool),
+        isGeneric: !hasClimate,
         originalData: data
       };
     });

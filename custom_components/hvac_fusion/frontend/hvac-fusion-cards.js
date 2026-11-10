@@ -761,6 +761,39 @@ async function updateHASchedule(hass, scheduleId, name, days, icon) {
   lastKnownHashes.set(scheduleId, JSON.stringify(simulated));
   notifyScheduleUpdated(scheduleId);
 }
+function isClimatePayload(data) {
+  if (!data || typeof data !== "object") return false;
+  return data.hvac_mode !== void 0 || data.mode !== void 0 || data.heat_to !== void 0 || data.cool_to !== void 0 || data.target_temp_low !== void 0 || data.target_temp_high !== void 0 || data.temperature !== void 0;
+}
+function isForeignSchedule(scheduleItem) {
+  if (!scheduleItem) return false;
+  let totalBlocks = 0;
+  let climateBlocks = 0;
+  for (const day of DAYS_OF_WEEK) {
+    const rawBlocks = scheduleItem[day] || [];
+    totalBlocks += rawBlocks.length;
+    for (const b2 of rawBlocks) {
+      if (isClimatePayload(b2.data)) {
+        climateBlocks++;
+      }
+    }
+  }
+  if (totalBlocks === 0) return false;
+  return climateBlocks === 0;
+}
+function findScheduleInList(list, entityId, hass) {
+  var _a2;
+  if (!list || list.length === 0 || !entityId) return void 0;
+  const fullEntityId = entityId.startsWith("schedule.") ? entityId : `schedule.${entityId}`;
+  const shortId = entityId.replace(/^schedule\./, "");
+  const entities = hass == null ? void 0 : hass.entities;
+  if (entities && ((_a2 = entities[fullEntityId]) == null ? void 0 : _a2.unique_id)) {
+    const storageId = entities[fullEntityId].unique_id;
+    const match = list.find((s2) => s2.id === storageId);
+    if (match) return match;
+  }
+  return list.find((s2) => s2.id === fullEntityId || s2.id === shortId);
+}
 function convertToInternalBlocks(scheduleItem) {
   const result = {
     monday: [],
@@ -776,7 +809,8 @@ function convertToInternalBlocks(scheduleItem) {
     const rawBlocks = scheduleItem[day] || [];
     result[day] = rawBlocks.map((b2, index) => {
       const data = b2.data || {};
-      const mode = (data.hvac_mode || data.mode || "heat_cool").toLowerCase();
+      const hasClimate = isClimatePayload(data);
+      const mode = (data.hvac_mode || data.mode || (hasClimate ? "heat_cool" : "off")).toLowerCase();
       const heat = data.heat_to ?? data.target_temp_low ?? data.temperature ?? 68;
       const cool = data.cool_to ?? data.target_temp_high ?? 74;
       return {
@@ -787,6 +821,7 @@ function convertToInternalBlocks(scheduleItem) {
         hvac_mode: ["heat_cool", "heat", "cool", "off"].includes(mode) ? mode : "heat_cool",
         heat_to: Number(heat),
         cool_to: Number(cool),
+        isGeneric: !hasClimate,
         originalData: data
       };
     });
@@ -1681,6 +1716,18 @@ _SchedulePresetCardEditor.styles = i$3`
       border-color: var(--primary-color, #38bdf8);
     }
 
+    .form-select {
+      color-scheme: dark;
+    }
+    .form-select optgroup {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--secondary-text-color, #9ca3af);
+    }
+    .form-select option {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--primary-text-color, #ffffff);
+    }
+
     .form-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1749,6 +1796,7 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     this.isYamlSchedule = false;
     this.isCompact = false;
     this.isEditMode = false;
+    this.isForeign = false;
     this.dragAction = null;
     this.lastDragEndTime = 0;
     this._lastLoadedScheduleHash = "";
@@ -1819,7 +1867,7 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     });
   }
   toggleEditMode() {
-    if (this.isYamlSchedule) return;
+    if (this.isYamlSchedule || this.isForeign) return;
     this.isEditMode = !this.isEditMode;
     if (this.isEditMode) {
       this.sendLockSignal(true);
@@ -1857,9 +1905,13 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     } catch {
     }
     if (!targetId || !list.some((s2) => s2.id === targetId)) {
-      targetId = this.config.entity || null;
-      if (targetId && targetId.startsWith("schedule.")) {
-        targetId = targetId.replace("schedule.", "");
+      if (this.config.entity) {
+        const found = findScheduleInList(list, this.config.entity, this.hass);
+        if (found) {
+          targetId = found.id;
+        } else {
+          targetId = this.config.entity.replace(/^schedule\./, "");
+        }
       }
     }
     if ((!targetId || !list.some((s2) => s2.id === targetId)) && list.length > 0) {
@@ -1881,8 +1933,14 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
       this._lastLoadedScheduleHash = JSON.stringify(item);
       this.blocksByDay = convertToInternalBlocks(item);
       this.isYamlSchedule = false;
+      this.isForeign = isForeignSchedule(item);
+      if (this.isForeign && this.isEditMode) {
+        this.isEditMode = false;
+        this.sendLockSignal(false);
+      }
     } else {
       this.isYamlSchedule = true;
+      this.isForeign = false;
     }
   }
   handleScheduleSelected(e2) {
@@ -2198,6 +2256,31 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     const tooltip = block.hvac_mode === "heat_cool" ? `Dual: Heat ${block.heat_to}°, Cool ${block.cool_to}° (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})` : block.hvac_mode === "heat" ? `Heat: ${block.heat_to}° (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})` : block.hvac_mode === "cool" ? `Cool: ${block.cool_to}° (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})` : `Off (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`;
     const estimatedWidthPx = 60;
     const orientation = getSplitOrientation(estimatedWidthPx, heightPx);
+    if (block.isGeneric) {
+      const genericTooltip = `Non-Climate Block: No HVAC targets (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`;
+      return b`
+        <div
+          class="schedule-cell cell-generic"
+          style="top: ${startPct}%; height: ${heightPct}%;"
+          title=${genericTooltip}
+          @click=${(e2) => this.handleBlockClick(e2, block)}
+        >
+          <div class="generic-cell-content">
+            ${heightPx >= 28 ? "No HVAC" : ""}
+          </div>
+          <div
+            class="resize-handle top"
+            @click=${(e2) => e2.stopPropagation()}
+            @pointerdown=${(e2) => this.handleResizePointerDown(e2, block, "resize-start")}
+          ></div>
+          <div
+            class="resize-handle bottom"
+            @click=${(e2) => e2.stopPropagation()}
+            @pointerdown=${(e2) => this.handleResizePointerDown(e2, block, "resize-end")}
+          ></div>
+        </div>
+      `;
+    }
     if (block.hvac_mode === "off") {
       return b`
         <div
@@ -2320,19 +2403,45 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
         <div class="card-header-row">
           <div class="title-row">
             <h2 class="card-title" title="${title}">${title}</h2>
-            ${this.isYamlSchedule ? b`<span class="yaml-badge" title="Defined in YAML: edits must be made in configuration.yaml">YAML (Read Only)</span>` : ""}
+            ${this.isYamlSchedule ? b`<span class="yaml-badge" title="Defined in YAML: edits must be made in configuration.yaml">YAML (Read Only)</span>` : this.isForeign ? b`<span class="yaml-badge" title="Non-HVAC schedule data payloads cannot be edited in this card">Non-HVAC (Read Only)</span>` : ""}
           </div>
 
           <div class="header-actions">
             ${this.schedules.length > 0 ? b`
                   <select class="schedule-select" @change=${this.handleScheduleSelected}>
-                    ${this.schedules.map(
-      (s2) => b`
-                        <option value=${s2.id} ?selected=${s2.id === this.selectedScheduleId}>
-                          ${s2.name || s2.id}
-                        </option>
-                      `
-    )}
+                    ${(() => {
+      const climateSchedules = this.schedules.filter((s2) => !isForeignSchedule(s2));
+      const foreignSchedules = this.schedules.filter((s2) => isForeignSchedule(s2));
+      if (foreignSchedules.length > 0 && climateSchedules.length > 0) {
+        return b`
+                          <optgroup label="Climate Schedules">
+                            ${climateSchedules.map(
+          (s2) => b`
+                                <option value=${s2.id} ?selected=${s2.id === this.selectedScheduleId}>
+                                  ${s2.name || s2.id}
+                                </option>
+                              `
+        )}
+                          </optgroup>
+                          <optgroup label="Other Schedules">
+                            ${foreignSchedules.map(
+          (s2) => b`
+                                <option value=${s2.id} ?selected=${s2.id === this.selectedScheduleId}>
+                                  ${s2.name || s2.id} (non-HVAC)
+                                </option>
+                              `
+        )}
+                          </optgroup>
+                        `;
+      }
+      return this.schedules.map(
+        (s2) => b`
+                          <option value=${s2.id} ?selected=${s2.id === this.selectedScheduleId}>
+                            ${s2.name || s2.id}${isForeignSchedule(s2) ? " (non-HVAC)" : ""}
+                          </option>
+                        `
+      );
+    })()}
                   </select>
                 ` : b`<span style="font-size: 0.85rem; color: var(--secondary-text-color, #a1a1aa);">${currentScheduleName}</span>`}
 
@@ -2340,8 +2449,8 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
             <button
               class="edit-toggle-btn ${this.isEditMode ? "active" : ""}"
               @click=${this.toggleEditMode}
-              ?disabled=${this.isYamlSchedule}
-              title=${this.isYamlSchedule ? "YAML schedules are read-only" : this.isEditMode ? "Finish editing" : "Enable editing"}
+              ?disabled=${this.isYamlSchedule || this.isForeign}
+              title=${this.isYamlSchedule ? "YAML schedules are read-only" : this.isForeign ? "Non-HVAC schedules are read-only" : this.isEditMode ? "Finish editing" : "Enable editing"}
             >
               ${this.isEditMode ? "✓ Done" : "✎ Edit"}
             </button>
@@ -2525,8 +2634,9 @@ _SchedulePresetCard.styles = i$3`
     }
 
     .schedule-select {
+      color-scheme: dark;
       background: rgba(255, 255, 255, 0.08);
-      color: #fff;
+      color: var(--primary-text-color, #ffffff);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 8px;
       padding: 6px 10px;
@@ -2537,6 +2647,29 @@ _SchedulePresetCard.styles = i$3`
     .schedule-select:focus {
       outline: none;
       border-color: var(--primary-color, #3b82f6);
+    }
+    .schedule-select optgroup {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--secondary-text-color, #9ca3af);
+      font-weight: 600;
+    }
+    .schedule-select option {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--primary-text-color, #ffffff);
+      font-weight: normal;
+    }
+
+    .non-climate-notice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      background: rgba(100, 116, 139, 0.2);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 6px;
+      padding: 6px 10px;
+      margin-top: 10px;
     }
 
     .edit-toggle-btn {
@@ -2764,6 +2897,29 @@ _SchedulePresetCard.styles = i$3`
       font-weight: 600;
     }
 
+    /* Generic non-climate block */
+    .cell-generic {
+      background: rgba(100, 116, 139, 0.35) !important;
+      border: 1px dashed rgba(148, 163, 184, 0.7) !important;
+      color: var(--secondary-text-color, #94a3b8) !important;
+      display: flex;
+    }
+    .cell-generic:hover {
+      background: rgba(100, 116, 139, 0.5) !important;
+      border-color: #cbd5e1 !important;
+    }
+    .generic-cell-content {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
     /* Carve preview overlay */
     .carve-preview {
       position: absolute;
@@ -2932,6 +3088,9 @@ __decorateClass$2([
 __decorateClass$2([
   r()
 ], SchedulePresetCard.prototype, "isEditMode");
+__decorateClass$2([
+  r()
+], SchedulePresetCard.prototype, "isForeign");
 if (!customElements.get("schedule-preset-card")) {
   customElements.define("schedule-preset-card", SchedulePresetCard);
 }
@@ -3115,6 +3274,18 @@ _ClimatePresetTimelineEditor.styles = i$3`
       border-color: var(--primary-color, #38bdf8);
     }
 
+    .form-select {
+      color-scheme: dark;
+    }
+    .form-select optgroup {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--secondary-text-color, #9ca3af);
+    }
+    .form-select option {
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      color: var(--primary-text-color, #ffffff);
+    }
+
     .form-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -3172,6 +3343,9 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
     this.currentPresetMode = "";
     this.isManual = false;
     this.isEditMode = false;
+    this.isYamlSchedule = false;
+    this.isForeign = false;
+    this.scheduleNotFound = false;
     this._lastLoadedScheduleHash = "";
     this.blocksByDay = {
       monday: [],
@@ -3248,7 +3422,7 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
     const list = await fetchScheduleList(this.hass);
     this.schedules = list;
     const targetEntityId = this.config.entity;
-    let resolvedScheduleId = null;
+    let scheduleEntityId = null;
     if (targetEntityId) {
       const stateObj = this.hass.states[targetEntityId];
       if (targetEntityId.startsWith("climate.")) {
@@ -3259,19 +3433,22 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
           const activeSched = attrs.active_schedule;
           const presetsMap = attrs.presets || {};
           if (activeSched && typeof activeSched === "string") {
-            resolvedScheduleId = activeSched.replace("schedule.", "");
+            scheduleEntityId = activeSched;
           } else if (presetsMap[this.currentPresetMode]) {
-            resolvedScheduleId = String(presetsMap[this.currentPresetMode]).replace("schedule.", "");
+            scheduleEntityId = String(presetsMap[this.currentPresetMode]);
           }
         }
       } else if (targetEntityId.startsWith("schedule.")) {
-        resolvedScheduleId = targetEntityId.replace("schedule.", "");
+        scheduleEntityId = targetEntityId;
       }
     }
     if (this.isManual) {
       this.activeScheduleId = "";
       this._lastLoadedScheduleHash = "";
       this.isEditMode = false;
+      this.isYamlSchedule = false;
+      this.isForeign = false;
+      this.scheduleNotFound = false;
       this.blocksByDay = {
         monday: [],
         tuesday: [],
@@ -3283,19 +3460,49 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
       };
       return;
     }
-    if (!resolvedScheduleId && list.length > 0) {
-      resolvedScheduleId = list[0].id;
+    let item;
+    if (scheduleEntityId) {
+      item = findScheduleInList(list, scheduleEntityId, this.hass);
+    } else if (list.length > 0) {
+      item = list[0];
     }
-    if (resolvedScheduleId) {
-      const item = list.find((s2) => s2.id === resolvedScheduleId);
-      if (item && !this.isSaving && !this.dragAction && !this.activeEditingBlock) {
-        const itemHash = JSON.stringify(item);
-        if (forceReload || resolvedScheduleId !== this.activeScheduleId || itemHash !== this._lastLoadedScheduleHash) {
-          this.activeScheduleId = resolvedScheduleId;
-          this._lastLoadedScheduleHash = itemHash;
-          this.blocksByDay = convertToInternalBlocks(item);
-        }
+    if (item && !this.isSaving && !this.dragAction && !this.activeEditingBlock) {
+      this.isYamlSchedule = false;
+      this.isForeign = isForeignSchedule(item);
+      this.scheduleNotFound = false;
+      if (this.isForeign && this.isEditMode) {
+        this.isEditMode = false;
+        this.sendLockSignal(false);
       }
+      const itemHash = JSON.stringify(item);
+      if (forceReload || item.id !== this.activeScheduleId || itemHash !== this._lastLoadedScheduleHash) {
+        this.activeScheduleId = item.id;
+        this._lastLoadedScheduleHash = itemHash;
+        this.blocksByDay = convertToInternalBlocks(item);
+      }
+    } else if (scheduleEntityId && !item) {
+      const fullEntityId = scheduleEntityId.startsWith("schedule.") ? scheduleEntityId : `schedule.${scheduleEntityId}`;
+      const stateObj = this.hass.states[fullEntityId];
+      if (stateObj) {
+        this.isYamlSchedule = true;
+        this.isForeign = false;
+        this.scheduleNotFound = false;
+      } else {
+        this.isYamlSchedule = false;
+        this.isForeign = false;
+        this.scheduleNotFound = true;
+      }
+      this.activeScheduleId = "";
+      this.isEditMode = false;
+      this.blocksByDay = {
+        monday: [],
+        tuesday: [],
+        wednesday: [],
+        thursday: [],
+        friday: [],
+        saturday: [],
+        sunday: []
+      };
     }
   }
   sendLockSignal(acquire) {
@@ -3309,7 +3516,7 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
     });
   }
   toggleEditMode() {
-    if (this.isManual) return;
+    if (this.isManual || this.isYamlSchedule || this.isForeign || this.scheduleNotFound) return;
     this.isEditMode = !this.isEditMode;
     if (this.isEditMode) {
       this.sendLockSignal(true);
@@ -3603,6 +3810,7 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
                     ${this.isManual ? "⚠️ Manual" : `🎯 ${this.currentPresetMode}`}
                   </span>
                 ` : ""}
+            ${this.isYamlSchedule ? b`<span class="yaml-badge" title="Defined in YAML: edits must be made in configuration.yaml">YAML (Read Only)</span>` : this.isForeign ? b`<span class="yaml-badge" title="Non-HVAC schedule data payloads cannot be edited in this card">Non-HVAC (Read Only)</span>` : ""}
           </div>
 
           <!-- Controls: Day Navigation + Edit Toggle -->
@@ -3618,8 +3826,8 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
             <button
               class="edit-toggle-btn ${this.isEditMode ? "active" : ""}"
               @click=${this.toggleEditMode}
-              ?disabled=${this.isManual}
-              title=${this.isManual ? "Manual mode active (no schedule to edit)" : this.isEditMode ? "Finish editing" : "Enable editing"}
+              ?disabled=${this.isManual || this.isYamlSchedule || this.isForeign || this.scheduleNotFound}
+              title=${this.isManual ? "Manual mode active (no schedule to edit)" : this.isYamlSchedule ? "YAML schedules are read-only" : this.isForeign ? "Non-HVAC schedules are read-only" : this.scheduleNotFound ? "Schedule entity not found" : this.isEditMode ? "Finish editing" : "Enable editing"}
             >
               ${this.isEditMode ? "✓ Done" : "✎ Edit"}
             </button>
@@ -3633,10 +3841,22 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
           @pointermove=${this.handleTrackPointerMove}
           @pointerup=${this.handleTrackPointerUp}
         >
-          <!-- Manual Hold Overlay -->
+          <!-- Status Overlays -->
           ${this.isManual ? b`
                 <div class="manual-overlay">
                   <span>⏸️ Manual Hold Active — No schedule running</span>
+                </div>
+              ` : this.isYamlSchedule ? b`
+                <div class="manual-overlay">
+                  <span>📄 YAML Schedule Active — Read-only</span>
+                </div>
+              ` : this.isForeign ? b`
+                <div class="manual-overlay">
+                  <span>⚠️ Non-HVAC Schedule Active — Read-only</span>
+                </div>
+              ` : this.scheduleNotFound ? b`
+                <div class="manual-overlay error">
+                  <span>⚠️ Schedule entity not found</span>
                 </div>
               ` : ""}
           <!-- Grid tick lines every 4 hours -->
@@ -3654,7 +3874,7 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
       const heatText = getHeatTextColor(block.heat_to, unit);
       const coolColor = getCoolColor(block.cool_to, unit);
       const coolText = getCoolTextColor(block.cool_to, unit);
-      const tooltip = block.hvac_mode === "heat_cool" ? `Dual: Heat ${block.heat_to}°, Cool ${block.cool_to}° (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})` : `${block.hvac_mode} (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`;
+      const tooltip = block.isGeneric ? `Non-Climate Block: No HVAC targets (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})` : block.hvac_mode === "heat_cool" ? `Dual: Heat ${block.heat_to}°, Cool ${block.cool_to}° (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})` : `${block.hvac_mode} (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`;
       return b`
               <div
                 class="timeline-block"
@@ -3662,7 +3882,11 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
                 title=${tooltip}
                 @click=${(e2) => this.handleBlockClick(e2, block)}
               >
-                ${block.hvac_mode === "heat_cool" ? b`
+                ${block.isGeneric ? b`
+                      <div class="band-generic">
+                        ${widthPct > 8 ? "No HVAC" : ""}
+                      </div>
+                    ` : block.hvac_mode === "heat_cool" ? b`
                       <div class="band-cool" style="background-color: ${coolColor}; color: ${coolText};">
                         ${widthPct > 5 ? `${block.cool_to}°` : ""}
                       </div>
@@ -3825,6 +4049,16 @@ _ClimatePresetTimeline.styles = i$3`
       color: #eab308;
       border-color: rgba(234, 179, 8, 0.3);
     }
+    .yaml-badge {
+      font-size: 0.72rem;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(234, 179, 8, 0.15);
+      color: #eab308;
+      border: 1px solid rgba(234, 179, 8, 0.3);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
 
     .header-controls {
       display: flex;
@@ -3940,6 +4174,9 @@ _ClimatePresetTimeline.styles = i$3`
       pointer-events: none;
       z-index: 15;
     }
+    .manual-overlay.error {
+      color: #f87171;
+    }
 
     /* Horizontal Grid Ticks (every 4 hours) */
     .time-grid-line {
@@ -3986,6 +4223,22 @@ _ClimatePresetTimeline.styles = i$3`
       min-height: 0;
     }
 
+    .band-generic {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.70rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      background: rgba(100, 116, 139, 0.35);
+      border: 1px dashed rgba(148, 163, 184, 0.7);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      min-height: 0;
+    }
+
     /* Horizontal Resize Handles (Left / Right edges) */
     .h-resize-handle {
       position: absolute;
@@ -4011,8 +4264,8 @@ _ClimatePresetTimeline.styles = i$3`
       top: 0;
       bottom: 0;
       width: 2px;
-      background: #f43f5e;
-      box-shadow: 0 0 8px rgba(244, 63, 94, 0.9);
+      background: #ffffff;
+      box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.7), 0 0 6px 1px rgba(244, 63, 94, 0.85);
       z-index: 30;
       pointer-events: none;
     }
@@ -4026,7 +4279,8 @@ _ClimatePresetTimeline.styles = i$3`
       height: 0;
       border-left: 4px solid transparent;
       border-right: 4px solid transparent;
-      border-top: 5px solid #f43f5e;
+      border-top: 5px solid #ffffff;
+      filter: drop-shadow(0 0 2px rgba(244, 63, 94, 0.9));
     }
 
     /* Time Axis Labels (Under track) */
@@ -4115,6 +4369,15 @@ __decorateClass([
 __decorateClass([
   r()
 ], ClimatePresetTimeline.prototype, "isEditMode");
+__decorateClass([
+  r()
+], ClimatePresetTimeline.prototype, "isYamlSchedule");
+__decorateClass([
+  r()
+], ClimatePresetTimeline.prototype, "isForeign");
+__decorateClass([
+  r()
+], ClimatePresetTimeline.prototype, "scheduleNotFound");
 __decorateClass([
   r()
 ], ClimatePresetTimeline.prototype, "blocksByDay");

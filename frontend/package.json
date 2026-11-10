@@ -1,6 +1,6 @@
 {
   "name": "hvac-fusion-cards",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "description": "Home Assistant Lovelace card suite for HVAC Fusion (7-day schedule calendar and 1-day space preset timeline)",
   "main": "dist/hvac-fusion-cards.js",
   "type": "module",
