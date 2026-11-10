@@ -692,7 +692,7 @@ export class SchedulePresetCard extends LitElement {
 
     if (!targetId || !list.some((s) => s.id === targetId)) {
       if (this.config.entity) {
-        const found = findScheduleInList(list, this.config.entity, this.hass);
+        const found = await findScheduleInList(list, this.config.entity, this.hass);
         if (found) {
           targetId = found.id;
         } else {

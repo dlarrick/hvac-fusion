@@ -574,7 +574,7 @@ export class ClimatePresetTimeline extends LitElement {
     // Look up schedule strictly by entity_id
     let item: HAScheduleItem | undefined;
     if (scheduleEntityId) {
-      item = findScheduleInList(list, scheduleEntityId, this.hass);
+      item = await findScheduleInList(list, scheduleEntityId, this.hass);
     } else if (list.length > 0) {
       item = list[0];
     }

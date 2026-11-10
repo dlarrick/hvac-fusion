@@ -781,18 +781,26 @@ function isForeignSchedule(scheduleItem) {
   if (totalBlocks === 0) return false;
   return climateBlocks === 0;
 }
-function findScheduleInList(list, entityId, hass) {
-  var _a2;
+async function findScheduleInList(list, entityId, hass) {
   if (!list || list.length === 0 || !entityId) return void 0;
   const fullEntityId = entityId.startsWith("schedule.") ? entityId : `schedule.${entityId}`;
   const shortId = entityId.replace(/^schedule\./, "");
-  const entities = hass == null ? void 0 : hass.entities;
-  if (entities && ((_a2 = entities[fullEntityId]) == null ? void 0 : _a2.unique_id)) {
-    const storageId = entities[fullEntityId].unique_id;
-    const match = list.find((s2) => s2.id === storageId);
-    if (match) return match;
+  const direct = list.find((s2) => s2.id === fullEntityId || s2.id === shortId);
+  if (direct) return direct;
+  if (hass) {
+    try {
+      const entry = await hass.callWS({
+        type: "config/entity_registry/get",
+        entity_id: fullEntityId
+      });
+      if (entry == null ? void 0 : entry.unique_id) {
+        const match = list.find((s2) => s2.id === entry.unique_id);
+        if (match) return match;
+      }
+    } catch {
+    }
   }
-  return list.find((s2) => s2.id === fullEntityId || s2.id === shortId);
+  return void 0;
 }
 function convertToInternalBlocks(scheduleItem) {
   const result = {
@@ -1906,7 +1914,7 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     }
     if (!targetId || !list.some((s2) => s2.id === targetId)) {
       if (this.config.entity) {
-        const found = findScheduleInList(list, this.config.entity, this.hass);
+        const found = await findScheduleInList(list, this.config.entity, this.hass);
         if (found) {
           targetId = found.id;
         } else {
@@ -3462,7 +3470,7 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
     }
     let item;
     if (scheduleEntityId) {
-      item = findScheduleInList(list, scheduleEntityId, this.hass);
+      item = await findScheduleInList(list, scheduleEntityId, this.hass);
     } else if (list.length > 0) {
       item = list[0];
     }
