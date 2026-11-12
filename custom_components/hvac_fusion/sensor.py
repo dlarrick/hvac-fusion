@@ -21,6 +21,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
+from . import get_manager
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,16 +37,7 @@ async def async_setup_platform(
     if DOMAIN not in hass.data:
         return
 
-    from . import HvacFusionManager
-
-    manager = next(
-        (
-            v
-            for v in hass.data.get(DOMAIN, {}).values()
-            if isinstance(v, HvacFusionManager)
-        ),
-        None,
-    )
+    manager = get_manager(hass)
     if not manager:
         return
 

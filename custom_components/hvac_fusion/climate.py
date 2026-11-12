@@ -34,6 +34,7 @@ from homeassistant.util import dt as dt_util
 
 from hvac_crossover import Diagnostics, HvacAction, SpaceDirective
 
+from . import get_manager
 from .const import (
     CONF_PRESETS,
     CONF_SPACES,
@@ -56,16 +57,7 @@ async def async_setup_platform(
     if discovery_info is None or DOMAIN not in hass.data:
         return
 
-    from . import HvacFusionManager
-
-    manager = next(
-        (
-            v
-            for v in hass.data.get(DOMAIN, {}).values()
-            if isinstance(v, HvacFusionManager)
-        ),
-        None,
-    )
+    manager = get_manager(hass)
     if not manager:
         return
     entities = []
