@@ -398,3 +398,46 @@ def test_heat_pump_capacity_and_derating():
     # Mini-split head emitter retains its own head rating
     emitter = topology.spaces[0].emitters[0]
     assert emitter.nominal_btu == 18000.0
+
+
+def test_space_climate_hvac_action_deadband_buffer_fallback():
+    """Verify fallback hvac_action applies 0.5°F maintenance buffer when physical entity cannot report action."""
+    from homeassistant.components.climate import HVACMode
+
+    hass = MagicMock()
+    manager = MagicMock(spec=HvacFusionManager)
+    manager.hass = hass
+    manager.emitter_entity_map = {"emitter1": "climate.kumo_unit"}
+
+    # Mock underlying state: state exists, but has NO hvac_action attribute (like hass-kumo)
+    underlying_state = MagicMock()
+    underlying_state.attributes = {}  # No hvac_action!
+    hass.states.get.return_value = underlying_state
+
+    space_conf = {CONF_ID: "living_room", CONF_NAME: "Living Room"}
+    entity = HvacFusionSpaceClimate(manager, space_conf)
+    entity._active_delivery_units = ["emitter1"]
+
+    # 1. Heating mode with heat_to = 66.0
+    entity._attr_hvac_mode = HVACMode.HEAT
+    entity.get_comfort_bounds = MagicMock(return_value=(66.0, None))
+
+    # At 66.2°F (< 66.0 + 0.5): plateau maintenance -> HEATING
+    manager.get_space_current_temp.return_value = 66.2
+    assert entity.hvac_action == HVACAction.HEATING
+
+    # At 66.5°F (>= 66.0 + 0.5): satisfied inside deadband -> IDLE
+    manager.get_space_current_temp.return_value = 66.5
+    assert entity.hvac_action == HVACAction.IDLE
+
+    # 2. Cooling mode with cool_to = 77.0
+    entity._attr_hvac_mode = HVACMode.COOL
+    entity.get_comfort_bounds = MagicMock(return_value=(None, 77.0))
+
+    # At 76.8°F (> 77.0 - 0.5): plateau maintenance -> COOLING
+    manager.get_space_current_temp.return_value = 76.8
+    assert entity.hvac_action == HVACAction.COOLING
+
+    # At 76.5°F (<= 77.0 - 0.5): satisfied inside deadband -> IDLE
+    manager.get_space_current_temp.return_value = 76.5
+    assert entity.hvac_action == HVACAction.IDLE

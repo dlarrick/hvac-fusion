@@ -12,7 +12,8 @@ Every tracked file in the repository is organized as follows:
 hvac-fusion/
 ├── .github/
 │   └── workflows/
-│       └── test.yml                  # GitHub Actions CI (pytest, frontend typecheck, bundle drift check)
+│       ├── test.yml                  # GitHub Actions CI (pytest, frontend typecheck, bundle drift check)
+│       └── validate.yml              # GitHub Actions CI (HACS Action & Home Assistant Hassfest validation)
 ├── .gitignore                        # Git ignore patterns
 ├── .pre-commit-config.yaml           # Pre-commit hook definitions (ruff formatting and linting)
 ├── CONFIGURATION.md                  # Full UI Configuration Reference (Config Flow & Options Flow)
@@ -42,7 +43,7 @@ hvac-fusion/
 │       └── strings.json              # Source UI translation strings
 ├── docs/
 │   └── images/                       # Documentation screenshots and visual assets
-│       ├── climate_preset_timeline.png
+│       ├── hvac_fusion_status_card.png
 │       └── schedule_preset_card.png
 ├── frontend/                         # Lovelace custom dashboard card suite (TypeScript + Lit + Vite)
 │   ├── .gitignore                    # Frontend build and dependency ignore patterns

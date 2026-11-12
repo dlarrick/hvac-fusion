@@ -392,6 +392,35 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             if any(a in ("idle", "fan") for a in actions):
                 return HVACAction.IDLE
 
+        # Fallback when physical entities cannot report hvac_action (e.g. hass-kumo):
+        # Inverter units maintain plateau within buffer inside comfort boundary.
+        curr = self.native_current_temperature
+        if curr is not None:
+            heat_to, cool_to = self.get_comfort_bounds()
+            buffer = 0.5
+            if (
+                self._manager
+                and hasattr(self._manager, "coordinator")
+                and self._manager.coordinator
+            ):
+                config = getattr(self._manager.coordinator, "config", None)
+                buffer = getattr(config, "deadband_maintenance_buffer_f", 0.5)
+
+            if self._attr_hvac_mode == HVACMode.HEAT:
+                if heat_to is not None and curr < heat_to + buffer:
+                    return HVACAction.HEATING
+                return HVACAction.IDLE
+            if self._attr_hvac_mode in (HVACMode.COOL, HVACMode.DRY):
+                if cool_to is not None and curr > cool_to - buffer:
+                    return HVACAction.COOLING
+                return HVACAction.IDLE
+            if self._attr_hvac_mode == HVACMode.HEAT_COOL:
+                if heat_to is not None and curr < heat_to + buffer:
+                    return HVACAction.HEATING
+                if cool_to is not None and curr > cool_to - buffer:
+                    return HVACAction.COOLING
+                return HVACAction.IDLE
+
         return self._attr_hvac_action
 
     @property
