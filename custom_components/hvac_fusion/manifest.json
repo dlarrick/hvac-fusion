@@ -1,22 +1,25 @@
 {
   "domain": "hvac_fusion",
   "name": "HVAC Fusion",
-  "documentation": "https://github.com/dlarrick/hvac-fusion",
-  "issue_tracker": "https://github.com/dlarrick/hvac-fusion/issues",
-  "dependencies": [],
   "after_dependencies": [
     "frontend",
     "http"
   ],
-  "requirements": [
-    "hvac-crossover==0.1.8"
+  "categories": [
+    "climate"
   ],
   "codeowners": [
     "@dlarrick"
   ],
   "config_flow": true,
-  "single_config_entry": true,
-  "version": "0.1.7",
+  "dependencies": [],
+  "documentation": "https://github.com/dlarrick/hvac-fusion",
   "integration_type": "service",
-  "iot_class": "local_polling"
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/dlarrick/hvac-fusion/issues",
+  "requirements": [
+    "hvac-crossover==0.1.8"
+  ],
+  "single_config_entry": true,
+  "version": "0.1.7"
 }
