@@ -2788,8 +2788,6 @@ _SchedulePresetCard.styles = i$3`
       color: var(--secondary-text-color, #a1a1aa);
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       background: rgba(255, 255, 255, 0.02);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
     }
     .day-header.today {
       color: var(--primary-color, #38bdf8);
@@ -2924,8 +2922,6 @@ _SchedulePresetCard.styles = i$3`
       font-size: 0.68rem;
       font-weight: 600;
       color: #cbd5e1;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
     }
 
     /* Carve preview overlay */
@@ -3118,14 +3114,16 @@ var __decorateClass$1 = (decorators, target, key, kind) => {
   if (result) __defProp$1(target, key, result);
   return result;
 };
-const _ClimatePresetTimelineEditor = class _ClimatePresetTimelineEditor extends i {
+const _HvacFusionStatusEditor = class _HvacFusionStatusEditor extends i {
   setConfig(config) {
     this._config = {
-      step_size: 15,
-      temperature_unit: "°F",
-      min_deadband: 2,
+      show_schedule: true,
+      show_boost: true,
+      show_diagnostics: true,
+      diagnostics_expanded_by_default: false,
+      diagnostic_attributes: ["phase", "active_producer", "explanation", "window_open"],
       ...config,
-      type: "custom:climate-preset-timeline"
+      type: "custom:hvac-fusion-status-card"
     };
   }
   _valueChanged(key, value) {
@@ -3142,15 +3140,36 @@ const _ClimatePresetTimelineEditor = class _ClimatePresetTimelineEditor extends 
       })
     );
   }
+  _toggleDiagnosticAttribute(attrKey, checked) {
+    const current = this._config.diagnostic_attributes || [
+      "phase",
+      "active_producer",
+      "explanation",
+      "window_open"
+    ];
+    let next;
+    if (checked) {
+      next = current.includes(attrKey) ? current : [...current, attrKey];
+    } else {
+      next = current.filter((k2) => k2 !== attrKey);
+    }
+    this._valueChanged("diagnostic_attributes", next);
+  }
   render() {
     var _a2;
     if (!this._config) return b``;
     const climateEntities = Object.keys(((_a2 = this.hass) == null ? void 0 : _a2.states) || {}).filter((entityId) => entityId.startsWith("climate.")).sort();
+    const selectedAttrs = this._config.diagnostic_attributes || [
+      "phase",
+      "active_producer",
+      "explanation",
+      "window_open"
+    ];
     return b`
       <div class="editor-container">
         <!-- Target Climate Entity -->
         <div class="form-row">
-          <label class="form-label">Climate Space Leader Entity (Required)</label>
+          <label class="form-label">Space Climate Entity (Required)</label>
           <select
             class="form-select"
             .value=${this._config.entity || ""}
@@ -3158,86 +3177,179 @@ const _ClimatePresetTimelineEditor = class _ClimatePresetTimelineEditor extends 
           >
             <option value="">(Select a climate entity...)</option>
             ${climateEntities.map((id) => {
-      var _a3, _b, _c, _d;
+      var _a3, _b, _c;
       const stateObj = (_a3 = this.hass) == null ? void 0 : _a3.states[id];
       const friendlyName = ((_b = stateObj == null ? void 0 : stateObj.attributes) == null ? void 0 : _b.friendly_name) || id;
-      const hasPresets = ((_c = stateObj == null ? void 0 : stateObj.attributes) == null ? void 0 : _c.presets) || ((_d = stateObj == null ? void 0 : stateObj.attributes) == null ? void 0 : _d.preset_modes);
+      const isHvacFusion = ((_c = stateObj == null ? void 0 : stateObj.attributes) == null ? void 0 : _c.current_boost) !== void 0;
       return b`
                 <option value=${id} ?selected=${this._config.entity === id}>
-                  ${friendlyName} (${id}) ${hasPresets ? "⭐" : ""}
+                  ${friendlyName} (${id}) ${isHvacFusion ? "⚡" : ""}
                 </option>
               `;
     })}
           </select>
           <span style="font-size: 0.75rem; color: var(--secondary-text-color, #9ca3af);">
-            The card will automatically follow this climate entity's active preset mode and display its corresponding schedule.
+            Bound space entity (e.g. climate.living_room_space).
           </span>
         </div>
 
-        <!-- Card Title -->
+        <!-- Custom Card Title -->
         <div class="form-row">
-          <label class="form-label">Card Title (optional)</label>
+          <label class="form-label">Card Title (optional override)</label>
           <input
             type="text"
             class="form-input"
-            placeholder="e.g. Climate Preset 1-day Timeline"
+            placeholder="e.g. Living Room Space"
             .value=${this._config.title || ""}
             @input=${(e2) => this._valueChanged("title", e2.target.value)}
           />
         </div>
 
-        <!-- Settings Grid -->
-        <div class="form-grid">
-          <!-- Temperature Unit -->
-          <div class="form-row">
-            <label class="form-label">Temperature Unit</label>
-            <div class="unit-selector">
-              <button
-                type="button"
-                class="unit-btn ${this._config.temperature_unit !== "°C" ? "active" : ""}"
-                @click=${() => this._valueChanged("temperature_unit", "°F")}
-              >°F</button>
-              <button
-                type="button"
-                class="unit-btn ${this._config.temperature_unit === "°C" ? "active" : ""}"
-                @click=${() => this._valueChanged("temperature_unit", "°C")}
-              >°C</button>
-            </div>
-          </div>
-
-          <!-- Time Step Size -->
-          <div class="form-row">
-            <label class="form-label">Snapping Interval</label>
-            <select
-              class="form-select"
-              .value=${String(this._config.step_size || 15)}
-              @change=${(e2) => this._valueChanged("step_size", parseInt(e2.target.value, 10))}
-            >
-              <option value="15" ?selected=${(this._config.step_size || 15) === 15}>15 Minutes</option>
-              <option value="30" ?selected=${this._config.step_size === 30}>30 Minutes</option>
-              <option value="60" ?selected=${this._config.step_size === 60}>60 Minutes</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Minimum Deadband -->
+        <!-- Section 1 & 2 & 3 Visibility Toggles -->
         <div class="form-row">
-          <label class="form-label">Min Deadband Between Heat & Cool</label>
-          <input
-            type="number"
-            class="form-input"
-            min="0"
-            max="15"
-            step="1"
-            .value=${String(this._config.min_deadband ?? 2)}
-            @input=${(e2) => this._valueChanged("min_deadband", parseFloat(e2.target.value) || 0)}
-          />
+          <span class="section-title">Card Sections</span>
+          <div class="checkbox-group">
+            <label class="checkbox-item">
+              <input
+                type="checkbox"
+                ?checked=${this._config.show_schedule !== false}
+                @change=${(e2) => this._valueChanged("show_schedule", e2.target.checked)}
+              />
+              <span>Show 24-Hour Schedule Timeline</span>
+            </label>
+
+            <label class="checkbox-item">
+              <input
+                type="checkbox"
+                ?checked=${this._config.show_boost !== false}
+                @change=${(e2) => this._valueChanged("show_boost", e2.target.checked)}
+              />
+              <span>Show Temporary Comfort Bump Toolbar</span>
+            </label>
+
+            <label class="checkbox-item">
+              <input
+                type="checkbox"
+                ?checked=${this._config.show_diagnostics !== false}
+                @change=${(e2) => this._valueChanged("show_diagnostics", e2.target.checked)}
+              />
+              <span>Show Space Details & Diagnostics Accordion</span>
+            </label>
+          </div>
         </div>
+
+        <!-- Space Diagnostics Attributes Checklist -->
+        ${this._config.show_diagnostics !== false ? b`
+              <div class="form-row">
+                <span class="section-title">Space Diagnostic Attributes to Display</span>
+                <div class="checkbox-group">
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes("phase")}
+                      @change=${(e2) => this._toggleDiagnosticAttribute(
+      "phase",
+      e2.target.checked
+    )}
+                    />
+                    <span>System Phase (Plateau Maintenance / Recovery / Ventilation)</span>
+                  </label>
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes("active_producer")}
+                      @change=${(e2) => this._toggleDiagnosticAttribute(
+      "active_producer",
+      e2.target.checked
+    )}
+                    />
+                    <span>Active Producer (e.g. Heat Pump, Boiler)</span>
+                  </label>
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes("explanation")}
+                      @change=${(e2) => this._toggleDiagnosticAttribute(
+      "explanation",
+      e2.target.checked
+    )}
+                    />
+                    <span>Dispatch Explanation (Live explanation string from coordinator)</span>
+                  </label>
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes("window_open")}
+                      @change=${(e2) => this._toggleDiagnosticAttribute(
+      "window_open",
+      e2.target.checked
+    )}
+                    />
+                    <span>Window / Door Interlock (Open vs Closed)</span>
+                  </label>
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes("active_delivery_units")}
+                      @change=${(e2) => this._toggleDiagnosticAttribute(
+      "active_delivery_units",
+      e2.target.checked
+    )}
+                    />
+                    <span>Active Delivery Units (Indoor heads / hydronic loops)</span>
+                  </label>
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes("cycling_emitters")}
+                      @change=${(e2) => this._toggleDiagnosticAttribute(
+      "cycling_emitters",
+      e2.target.checked
+    )}
+                    />
+                    <span>Cycling Emitters (Emitters clamped by limit hysteresis)</span>
+                  </label>
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes("in_recovery")}
+                      @change=${(e2) => this._toggleDiagnosticAttribute(
+      "in_recovery",
+      e2.target.checked
+    )}
+                    />
+                    <span>Setback Recovery State</span>
+                  </label>
+
+                  <hr style="border: 0; border-top: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08)); margin: 4px 0;" />
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${Boolean(this._config.diagnostics_expanded_by_default)}
+                      @change=${(e2) => this._valueChanged(
+      "diagnostics_expanded_by_default",
+      e2.target.checked
+    )}
+                    />
+                    <span style="font-weight: 500; color: var(--secondary-text-color, #9ca3af);">
+                      Expand diagnostics by default (instead of collapsed)
+                    </span>
+                  </label>
+                </div>
+              </div>
+            ` : ""}
       </div>
     `;
   }
 };
-_ClimatePresetTimelineEditor.styles = i$3`
+_HvacFusionStatusEditor.styles = i$3`
     :host {
       display: block;
       font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
@@ -3294,45 +3406,55 @@ _ClimatePresetTimelineEditor.styles = i$3`
       color: var(--primary-text-color, #ffffff);
     }
 
-    .form-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-    }
-
-    .unit-selector {
+    .checkbox-group {
       display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
       border-radius: 8px;
-      overflow: hidden;
-      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.15));
+      padding: 12px;
     }
 
-    .unit-btn {
-      flex: 1;
-      padding: 8px 12px;
-      background: rgba(255, 255, 255, 0.05);
-      border: none;
-      color: var(--secondary-text-color, #9ca3af);
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       cursor: pointer;
-      font-weight: 600;
-      font-size: 0.9rem;
-      transition: all 0.15s;
+      font-size: 0.88rem;
+      color: var(--primary-text-color, #f1f5f9);
     }
 
-    .unit-btn.active {
-      background: var(--primary-color, #38bdf8);
-      color: #0f172a;
+    .checkbox-item input[type='checkbox'] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: var(--primary-color, #38bdf8);
+    }
+
+    .section-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--primary-color, #38bdf8);
+      margin-top: 4px;
     }
   `;
-let ClimatePresetTimelineEditor = _ClimatePresetTimelineEditor;
+let HvacFusionStatusEditor = _HvacFusionStatusEditor;
 __decorateClass$1([
   n2({ attribute: false })
-], ClimatePresetTimelineEditor.prototype, "hass");
+], HvacFusionStatusEditor.prototype, "hass");
 __decorateClass$1([
   r()
-], ClimatePresetTimelineEditor.prototype, "_config");
+], HvacFusionStatusEditor.prototype, "_config");
+if (!customElements.get("hvac-fusion-status-editor")) {
+  customElements.define("hvac-fusion-status-editor", HvacFusionStatusEditor);
+}
 if (!customElements.get("climate-preset-timeline-editor")) {
-  customElements.define("climate-preset-timeline-editor", ClimatePresetTimelineEditor);
+  customElements.define(
+    "climate-preset-timeline-editor",
+    class extends HvacFusionStatusEditor {
+    }
+  );
 }
 var __defProp = Object.defineProperty;
 var __decorateClass = (decorators, target, key, kind) => {
@@ -3343,14 +3465,13 @@ var __decorateClass = (decorators, target, key, kind) => {
   if (result) __defProp(target, key, result);
   return result;
 };
-const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
+const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
   constructor() {
     super(...arguments);
     this.schedules = [];
     this.activeScheduleId = "";
     this.currentPresetMode = "";
     this.isManual = false;
-    this.isEditMode = false;
     this.isYamlSchedule = false;
     this.isForeign = false;
     this.scheduleNotFound = false;
@@ -3365,658 +3486,415 @@ const _ClimatePresetTimeline = class _ClimatePresetTimeline extends i {
       sunday: []
     };
     this.selectedDayIndex = ((/* @__PURE__ */ new Date()).getDay() + 6) % 7;
-    this.activeEditingBlock = null;
-    this.isSaving = false;
-    this.dragAction = null;
-    this.lastDragEndTime = 0;
+    this.diagnosticsExpanded = false;
   }
   static async getConfigElement() {
-    return document.createElement("climate-preset-timeline-editor");
+    return document.createElement("hvac-fusion-status-editor");
   }
   static getStubConfig() {
     return {
-      type: "custom:climate-preset-timeline",
+      type: "custom:hvac-fusion-status-card",
       title: "",
       entity: "",
-      temperature_unit: "°F",
-      step_size: 15,
-      min_deadband: 2
+      show_schedule: true,
+      show_boost: true,
+      show_diagnostics: true,
+      diagnostics_expanded_by_default: false,
+      diagnostic_attributes: ["phase", "active_producer", "explanation", "window_open"]
     };
   }
   connectedCallback() {
+    var _a2;
     super.connectedCallback();
     this._timer = setInterval(() => this.requestUpdate(), 3e4);
     this._unsubscribeSync = subscribeScheduleUpdates(() => {
-      this.syncFromHass(true);
+      this.refreshSchedules(true);
     });
+    if ((_a2 = this.config) == null ? void 0 : _a2.diagnostics_expanded_by_default) {
+      this.diagnosticsExpanded = true;
+    }
   }
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._timer) {
-      clearInterval(this._timer);
-      this._timer = void 0;
-    }
-    if (this._unsubscribeSync) {
-      this._unsubscribeSync();
-      this._unsubscribeSync = void 0;
-    }
-    if (this._heartbeatTimer) {
-      clearInterval(this._heartbeatTimer);
-      this._heartbeatTimer = void 0;
-    }
-    if (this.isEditMode) {
-      this.sendLockSignal(false);
-    }
+    if (this._timer) clearInterval(this._timer);
+    if (this._unsubscribeSync) this._unsubscribeSync();
   }
   setConfig(config) {
     if (!config) throw new Error("Invalid configuration");
     this.config = {
-      temperature_unit: "°F",
-      step_size: 15,
-      min_deadband: 2,
+      show_schedule: true,
+      show_boost: true,
+      show_diagnostics: true,
+      diagnostics_expanded_by_default: false,
+      diagnostic_attributes: ["phase", "active_producer", "explanation", "window_open"],
       ...config
     };
-  }
-  getCardSize() {
-    return 3;
+    if (this.config.diagnostics_expanded_by_default) {
+      this.diagnosticsExpanded = true;
+    }
   }
   willUpdate(changedProps) {
     if (changedProps.has("hass") && this.hass) {
-      this.syncFromHass();
+      this.syncWithClimateEntity();
     }
   }
-  async syncFromHass(forceReload = false) {
-    if (!this.hass || this.isSaving || this.dragAction || this.activeEditingBlock) return;
-    const list = await fetchScheduleList(this.hass);
-    this.schedules = list;
-    const targetEntityId = this.config.entity;
-    let scheduleEntityId = null;
-    if (targetEntityId) {
-      const stateObj = this.hass.states[targetEntityId];
-      if (targetEntityId.startsWith("climate.")) {
-        const attrs = (stateObj == null ? void 0 : stateObj.attributes) || {};
-        this.currentPresetMode = attrs.preset_mode || "unknown";
-        this.isManual = attrs.preset_mode === "manual";
-        if (!this.isManual) {
-          const activeSched = attrs.active_schedule;
-          const presetsMap = attrs.presets || {};
-          if (activeSched && typeof activeSched === "string") {
-            scheduleEntityId = activeSched;
-          } else if (presetsMap[this.currentPresetMode]) {
-            scheduleEntityId = String(presetsMap[this.currentPresetMode]);
-          }
-        }
-      } else if (targetEntityId.startsWith("schedule.")) {
-        scheduleEntityId = targetEntityId;
-      }
-    }
-    if (this.isManual) {
-      this.activeScheduleId = "";
-      this._lastLoadedScheduleHash = "";
-      this.isEditMode = false;
-      this.isYamlSchedule = false;
-      this.isForeign = false;
-      this.scheduleNotFound = false;
-      this.blocksByDay = {
-        monday: [],
-        tuesday: [],
-        wednesday: [],
-        thursday: [],
-        friday: [],
-        saturday: [],
-        sunday: []
-      };
-      return;
-    }
-    let item;
-    if (scheduleEntityId) {
-      item = await findScheduleInList(list, scheduleEntityId, this.hass);
-    } else if (list.length > 0) {
-      item = list[0];
-    }
-    if (item && !this.isSaving && !this.dragAction && !this.activeEditingBlock) {
-      this.isYamlSchedule = false;
-      this.isForeign = isForeignSchedule(item);
-      this.scheduleNotFound = false;
-      if (this.isForeign && this.isEditMode) {
-        this.isEditMode = false;
-        this.sendLockSignal(false);
-      }
-      const itemHash = JSON.stringify(item);
-      if (forceReload || item.id !== this.activeScheduleId || itemHash !== this._lastLoadedScheduleHash) {
-        this.activeScheduleId = item.id;
-        this._lastLoadedScheduleHash = itemHash;
-        this.blocksByDay = convertToInternalBlocks(item);
-      }
-    } else if (scheduleEntityId && !item) {
-      const fullEntityId = scheduleEntityId.startsWith("schedule.") ? scheduleEntityId : `schedule.${scheduleEntityId}`;
-      const stateObj = this.hass.states[fullEntityId];
-      if (stateObj) {
-        this.isYamlSchedule = true;
-        this.isForeign = false;
-        this.scheduleNotFound = false;
-      } else {
-        this.isYamlSchedule = false;
-        this.isForeign = false;
-        this.scheduleNotFound = true;
-      }
-      this.activeScheduleId = "";
-      this.isEditMode = false;
-      this.blocksByDay = {
-        monday: [],
-        tuesday: [],
-        wednesday: [],
-        thursday: [],
-        friday: [],
-        saturday: [],
-        sunday: []
-      };
-    }
-  }
-  sendLockSignal(acquire) {
-    var _a2, _b;
-    if (!this.hass || !this.activeScheduleId) return;
-    const action = acquire ? "acquire_schedule_lock" : "release_schedule_lock";
-    if (!((_b = (_a2 = this.hass.services) == null ? void 0 : _a2.hvac_fusion) == null ? void 0 : _b[action])) return;
-    this.hass.callService("hvac_fusion", action, {
-      schedule_id: this.activeScheduleId,
-      ...acquire ? { duration: 300 } : {}
-    });
-  }
-  toggleEditMode() {
-    if (this.isManual || this.isYamlSchedule || this.isForeign || this.scheduleNotFound) return;
-    this.isEditMode = !this.isEditMode;
-    if (this.isEditMode) {
-      this.sendLockSignal(true);
-      if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
-      this._heartbeatTimer = setInterval(() => {
-        if (this.isEditMode) this.sendLockSignal(true);
-      }, 6e4);
-    } else {
-      if (this._heartbeatTimer) {
-        clearInterval(this._heartbeatTimer);
-        this._heartbeatTimer = void 0;
-      }
-      this.sendLockSignal(false);
-    }
-  }
-  get currentDayKey() {
-    return DAYS_OF_WEEK[this.selectedDayIndex];
-  }
-  changeDay(delta) {
-    this.selectedDayIndex = (this.selectedDayIndex + delta + 7) % 7;
-  }
-  // --- Interaction: Dragging & Resizing Horizontally ---
-  handleTrackPointerDown(e2) {
-    if (!this.isEditMode || this.isManual) return;
-    const track = e2.currentTarget;
-    const rect = track.getBoundingClientRect();
-    const clickX = e2.clientX - rect.left;
-    const ratio = Math.max(0, Math.min(1, clickX / rect.width));
-    const stepSize = this.config.step_size || 15;
-    const clickedMinute = snapMinutes(ratio * 1440, stepSize);
-    track.setPointerCapture(e2.pointerId);
-    this.dragAction = {
-      type: "create",
-      initialX: e2.clientX,
-      initialMinute: clickedMinute,
-      currentMinute: clickedMinute,
-      hasDragged: false
-    };
-  }
-  handleBlockClick(e2, block) {
+  async syncWithClimateEntity() {
     var _a2;
-    e2.stopPropagation();
-    if (!this.isEditMode || this.isManual) return;
-    if (Date.now() - this.lastDragEndTime < 350 || ((_a2 = this.dragAction) == null ? void 0 : _a2.hasDragged)) return;
-    this.activeEditingBlock = block;
-  }
-  handleResizePointerDown(e2, block, type) {
-    e2.stopPropagation();
-    if (!this.isEditMode || this.isManual) return;
-    e2.target.setPointerCapture(e2.pointerId);
-    const blockList = this.blocksByDay[this.currentDayKey];
-    let abuttingBlockId;
-    if (type === "resize-end") {
-      const neighbor = blockList.find((b2) => b2.id !== block.id && b2.startMinutes === block.endMinutes);
-      if (neighbor) abuttingBlockId = neighbor.id;
-    } else if (type === "resize-start") {
-      const neighbor = blockList.find((b2) => b2.id !== block.id && b2.endMinutes === block.startMinutes);
-      if (neighbor) abuttingBlockId = neighbor.id;
+    if (!this.hass || !((_a2 = this.config) == null ? void 0 : _a2.entity)) return;
+    const stateObj = this.hass.states[this.config.entity];
+    if (!stateObj) return;
+    const preset = stateObj.attributes.preset_mode || "manual";
+    this.currentPresetMode = preset;
+    this.isManual = preset === "manual";
+    const activeSchedule = stateObj.attributes.active_schedule;
+    let targetScheduleId = activeSchedule;
+    if (!targetScheduleId && stateObj.attributes.presets) {
+      targetScheduleId = stateObj.attributes.presets[preset];
     }
-    this.dragAction = {
-      type,
-      blockId: block.id,
-      abuttingBlockId,
-      initialX: e2.clientX,
-      initialMinute: type === "resize-start" ? block.startMinutes : block.endMinutes,
-      currentMinute: type === "resize-start" ? block.startMinutes : block.endMinutes,
-      initialStart: block.startMinutes,
-      initialEnd: block.endMinutes,
-      hasDragged: false
-    };
-  }
-  handleTrackPointerMove(e2) {
-    if (!this.dragAction) return;
-    if (Math.abs(e2.clientX - this.dragAction.initialX) > 5) {
-      this.dragAction.hasDragged = true;
+    if (targetScheduleId && targetScheduleId !== this.activeScheduleId) {
+      this.activeScheduleId = targetScheduleId;
+      await this.refreshSchedules(false);
     }
-    const track = e2.currentTarget;
-    const rect = track.getBoundingClientRect();
-    const currentX = e2.clientX - rect.left;
-    const ratio = Math.max(0, Math.min(1, currentX / rect.width));
-    const stepSize = this.config.step_size || 15;
-    const currentMinute = snapMinutes(ratio * 1440, stepSize);
-    const { type, blockId, abuttingBlockId, initialMinute } = this.dragAction;
-    const day = this.currentDayKey;
-    const blockList = this.blocksByDay[day];
-    if (type === "create") {
-      if (!this.dragAction.hasDragged) return;
-      this.dragAction.currentMinute = currentMinute;
-      this.requestUpdate();
+  }
+  async refreshSchedules(forceRefresh = false) {
+    if (!this.hass) return;
+    try {
+      this.schedules = await fetchScheduleList(this.hass);
+      this.loadActiveSchedule(forceRefresh);
+    } catch (e2) {
+      console.error("[HvacFusionStatusCard] Failed to fetch schedules:", e2);
+    }
+  }
+  async loadActiveSchedule(force = false) {
+    if (!this.activeScheduleId || !this.hass) {
+      this.scheduleNotFound = true;
       return;
     }
-    const currentBlock = blockList.find((b2) => b2.id === blockId);
-    if (!currentBlock) return;
-    if (type === "resize-start") {
-      const nextStart = Math.min(currentBlock.endMinutes - stepSize, Math.max(0, currentMinute));
-      this.dragAction.currentMinute = nextStart;
-      if (nextStart !== currentBlock.startMinutes) {
-        currentBlock.startMinutes = nextStart;
-        if (abuttingBlockId) {
-          const neighbor = blockList.find((b2) => b2.id === abuttingBlockId);
-          if (neighbor) neighbor.endMinutes = nextStart;
-        }
-      }
-      this.requestUpdate();
-    } else if (type === "resize-end") {
-      const nextEnd = Math.max(currentBlock.startMinutes + stepSize, Math.min(1440, currentMinute));
-      this.dragAction.currentMinute = nextEnd;
-      if (nextEnd !== currentBlock.endMinutes) {
-        currentBlock.endMinutes = nextEnd;
-        if (abuttingBlockId) {
-          const neighbor = blockList.find((b2) => b2.id === abuttingBlockId);
-          if (neighbor) neighbor.startMinutes = nextEnd;
-        }
-      }
-      this.requestUpdate();
+    const schedule = await findScheduleInList(this.schedules, this.activeScheduleId, this.hass);
+    if (!schedule) {
+      this.scheduleNotFound = true;
+      return;
     }
-  }
-  handleTrackPointerUp() {
-    if (!this.dragAction) return;
-    const { type, initialMinute, hasDragged } = this.dragAction;
-    const day = this.currentDayKey;
-    if (type === "create") {
-      if (!hasDragged) {
-        const existing = this.blocksByDay[day].find(
-          (b2) => initialMinute >= b2.startMinutes && initialMinute < b2.endMinutes
-        );
-        if (existing) {
-          this.activeEditingBlock = existing;
-        } else {
-          this.config.step_size || 15;
-          const newBlock = {
-            id: `${day}_block_${Date.now()}`,
-            day,
-            startMinutes: initialMinute,
-            endMinutes: Math.min(1440, initialMinute + 60),
-            hvac_mode: "heat_cool",
-            heat_to: 68,
-            cool_to: 74
-          };
-          this.blocksByDay = {
-            ...this.blocksByDay,
-            [day]: [...this.blocksByDay[day], newBlock].sort((a2, b2) => a2.startMinutes - b2.startMinutes)
-          };
-          this.activeEditingBlock = newBlock;
-        }
-      } else {
-        const stepSize = this.config.step_size || 15;
-        const cur = this.dragAction.currentMinute ?? initialMinute;
-        const start = Math.min(initialMinute, cur);
-        const end = Math.max(start + stepSize, Math.max(initialMinute, cur));
-        this.carveAndInsertBlock(day, start, Math.min(1440, end));
-      }
+    this.scheduleNotFound = false;
+    this.isYamlSchedule = schedule.id.startsWith("yaml_");
+    this.isForeign = isForeignSchedule(schedule);
+    const scheduleHash = JSON.stringify(schedule);
+    if (!force && scheduleHash === this._lastLoadedScheduleHash) {
+      return;
     }
-    if (hasDragged) {
-      this.lastDragEndTime = Date.now();
-    }
-    this.dragAction = null;
-    this.saveCurrentSchedule();
+    this._lastLoadedScheduleHash = scheduleHash;
+    this.blocksByDay = convertToInternalBlocks(schedule);
   }
-  carveAndInsertBlock(day, carveStart, carveEnd) {
-    const blockList = this.blocksByDay[day];
-    const nextBlocks = [];
-    const intersected = blockList.find(
-      (b2) => b2.startMinutes < carveEnd && b2.endMinutes > carveStart
-    );
-    for (const b2 of blockList) {
-      if (b2.endMinutes <= carveStart || b2.startMinutes >= carveEnd) {
-        nextBlocks.push(b2);
-      } else if (b2.startMinutes < carveStart && b2.endMinutes > carveEnd) {
-        nextBlocks.push({ ...b2, id: `${b2.day}_block_${Date.now()}_l`, endMinutes: carveStart });
-        nextBlocks.push({ ...b2, id: `${b2.day}_block_${Date.now()}_r`, startMinutes: carveEnd });
-      } else if (b2.startMinutes < carveStart && b2.endMinutes <= carveEnd) {
-        nextBlocks.push({ ...b2, endMinutes: carveStart });
-      } else if (b2.startMinutes >= carveStart && b2.endMinutes > carveEnd) {
-        nextBlocks.push({ ...b2, startMinutes: carveEnd });
-      }
-    }
-    const newBlock = {
-      id: `${day}_block_${Date.now()}`,
-      day,
-      startMinutes: carveStart,
-      endMinutes: carveEnd,
-      hvac_mode: (intersected == null ? void 0 : intersected.hvac_mode) || "heat_cool",
-      heat_to: (intersected == null ? void 0 : intersected.heat_to) ?? 68,
-      cool_to: (intersected == null ? void 0 : intersected.cool_to) ?? 74
-    };
-    nextBlocks.push(newBlock);
-    nextBlocks.sort((a2, b2) => a2.startMinutes - b2.startMinutes);
-    this.blocksByDay = { ...this.blocksByDay, [day]: nextBlocks };
+  changeDay(offset) {
+    this.selectedDayIndex = (this.selectedDayIndex + offset + 7) % 7;
   }
-  handleSaveBlock(e2) {
-    const updated = e2.detail.block;
-    const day = updated.day;
-    this.blocksByDay = {
-      ...this.blocksByDay,
-      [day]: this.blocksByDay[day].map((b2) => b2.id === updated.id ? updated : b2)
-    };
-    this.activeEditingBlock = null;
-    this.saveCurrentSchedule();
-  }
-  handleDeleteBlock(e2) {
-    const { blockId, day } = e2.detail;
-    this.blocksByDay = {
-      ...this.blocksByDay,
-      [day]: this.blocksByDay[day].filter((b2) => b2.id !== blockId)
-    };
-    this.activeEditingBlock = null;
-    this.saveCurrentSchedule();
-  }
-  handleSplitBlock(e2) {
-    const { blockId, day, splitMinute } = e2.detail;
-    const list = this.blocksByDay[day];
-    const idx = list.findIndex((b2) => b2.id === blockId);
-    if (idx === -1) return;
-    const original = list[idx];
-    const originalEnd = original.endMinutes;
-    original.endMinutes = splitMinute;
-    const secondPiece = {
-      ...original,
-      id: `${day}_block_${Date.now()}`,
-      startMinutes: splitMinute,
-      endMinutes: originalEnd
-    };
-    this.blocksByDay = {
-      ...this.blocksByDay,
-      [day]: [...list, secondPiece].sort((a2, b2) => a2.startMinutes - b2.startMinutes)
-    };
-    this.activeEditingBlock = null;
-    this.saveCurrentSchedule();
-  }
-  handleCopyBlockTo(e2) {
-    const { block, target } = e2.detail;
-    const targetDays = target === "weekdays" ? ["monday", "tuesday", "wednesday", "thursday", "friday"] : target === "weekend" ? ["saturday", "sunday"] : DAYS_OF_WEEK;
-    const nextBlocks = { ...this.blocksByDay };
-    for (const day of targetDays) {
-      const copy = {
-        ...block,
-        id: `${day}_block_${Date.now()}_${Math.random()}`,
-        day
-      };
-      nextBlocks[day] = [
-        ...nextBlocks[day].filter(
-          (b2) => !(b2.startMinutes < copy.endMinutes && b2.endMinutes > copy.startMinutes)
-        ),
-        copy
-      ].sort((a2, b2) => a2.startMinutes - b2.startMinutes);
-    }
-    this.blocksByDay = nextBlocks;
-    this.activeEditingBlock = null;
-    this.saveCurrentSchedule();
-  }
-  async saveCurrentSchedule() {
-    if (!this.hass || !this.activeScheduleId) return;
-    this.isSaving = true;
+  async triggerComfortBoost(feeling) {
+    var _a2;
+    if (!this.hass || !((_a2 = this.config) == null ? void 0 : _a2.entity)) return;
     try {
-      const schedule = this.schedules.find((s2) => s2.id === this.activeScheduleId);
-      const name = (schedule == null ? void 0 : schedule.name) || this.activeScheduleId;
-      const icon = schedule == null ? void 0 : schedule.icon;
-      const haDays = convertToHABlocks(this.blocksByDay);
-      await updateHASchedule(this.hass, this.activeScheduleId, name, haDays, icon);
-      this._lastLoadedScheduleHash = JSON.stringify({ ...schedule, ...haDays, name, icon });
+      await this.hass.callService("hvac_fusion", "comfort_boost", {
+        entity_id: this.config.entity,
+        feeling,
+        delta_f: 2,
+        duration_minutes: 120,
+        decay: true
+      });
     } catch (err) {
-      console.error("[climate-preset-timeline] Failed to save schedule update:", err);
-    } finally {
-      this.isSaving = false;
+      console.error("[HvacFusionStatusCard] Failed to trigger comfort boost:", err);
+    }
+  }
+  async clearComfortBoost() {
+    var _a2;
+    if (!this.hass || !((_a2 = this.config) == null ? void 0 : _a2.entity)) return;
+    try {
+      await this.hass.callService("hvac_fusion", "clear_comfort_boost", {
+        entity_id: this.config.entity
+      });
+    } catch (err) {
+      console.error("[HvacFusionStatusCard] Failed to clear comfort boost:", err);
     }
   }
   render() {
-    var _a2, _b, _c;
-    const climateState = this.config.entity ? (_a2 = this.hass) == null ? void 0 : _a2.states[this.config.entity] : void 0;
-    const title = this.config.title || ((_b = climateState == null ? void 0 : climateState.attributes) == null ? void 0 : _b.friendly_name) || "Climate Preset 1-day Timeline";
-    const dayName = ((_c = DAY_LABELS[this.currentDayKey]) == null ? void 0 : _c.full) || this.currentDayKey;
+    var _a2, _b, _c, _d, _e;
+    if (!((_a2 = this.config) == null ? void 0 : _a2.entity)) {
+      return b`
+        <ha-card>
+          <div style="padding: 16px; text-align: center; color: var(--secondary-text-color);">
+            Please configure a target space climate entity.
+          </div>
+        </ha-card>
+      `;
+    }
+    const stateObj = (_b = this.hass) == null ? void 0 : _b.states[this.config.entity];
+    const friendlyName = this.config.title || ((_c = stateObj == null ? void 0 : stateObj.attributes) == null ? void 0 : _c.friendly_name) || this.config.entity.replace("climate.", "").replace(/_/g, " ");
+    const currentBoost = Number(((_d = stateObj == null ? void 0 : stateObj.attributes) == null ? void 0 : _d.current_boost) || 0);
+    const hasBoost = Math.abs(currentBoost) >= 0.1;
+    const selectedDay = DAYS_OF_WEEK[this.selectedDayIndex];
+    const dayLabel = DAY_LABELS[selectedDay];
     const todayIndex = ((/* @__PURE__ */ new Date()).getDay() + 6) % 7;
     const isViewingToday = this.selectedDayIndex === todayIndex;
-    const blocks = this.blocksByDay[this.currentDayKey] || [];
-    const unit = this.config.temperature_unit || "°F";
+    const dayBlocks = this.blocksByDay[selectedDay] || [];
     const now = /* @__PURE__ */ new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const nowPct = currentMinutes / 1440 * 100;
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowPct = Math.min(100, Math.max(0, nowMinutes / 1440 * 100));
     return b`
       <ha-card>
-        <!-- Header -->
-        <div class="header-row">
-          <div class="title-box">
-            <h3 class="card-title" title="${title}">${title}</h3>
-            ${this.currentPresetMode ? b`
-                  <span
-                    class="preset-chip ${this.isManual ? "manual" : ""}"
-                    title="${this.isManual ? "Manual Mode" : this.currentPresetMode}"
-                  >
-                    ${this.isManual ? "⚠️ Manual" : `🎯 ${this.currentPresetMode}`}
-                  </span>
-                ` : ""}
-            ${this.isYamlSchedule ? b`<span class="yaml-badge" title="Defined in YAML: edits must be made in configuration.yaml">YAML (Read Only)</span>` : this.isForeign ? b`<span class="yaml-badge" title="Non-HVAC schedule data payloads cannot be edited in this card">Non-HVAC (Read Only)</span>` : ""}
-          </div>
-
-          <!-- Controls: Day Navigation + Edit Toggle -->
-          <div class="header-controls">
-            <!-- Day navigation -->
-            <div class="day-nav">
-              <button class="nav-btn" @click=${() => this.changeDay(-1)} title="Previous Day">‹</button>
-              <span class="day-label">${isViewingToday ? `Today (${dayName.slice(0, 3)})` : dayName}</span>
-              <button class="nav-btn" @click=${() => this.changeDay(1)} title="Next Day">›</button>
-            </div>
-
-            <!-- Edit mode toggle -->
-            <button
-              class="edit-toggle-btn ${this.isEditMode ? "active" : ""}"
-              @click=${this.toggleEditMode}
-              ?disabled=${this.isManual || this.isYamlSchedule || this.isForeign || this.scheduleNotFound}
-              title=${this.isManual ? "Manual mode active (no schedule to edit)" : this.isYamlSchedule ? "YAML schedules are read-only" : this.isForeign ? "Non-HVAC schedules are read-only" : this.scheduleNotFound ? "Schedule entity not found" : this.isEditMode ? "Finish editing" : "Enable editing"}
+        <!-- Card Header -->
+        <div class="header">
+          <div class="header-left">
+            <span class="card-title" title="${friendlyName}">${friendlyName}</span>
+            <span
+              class="preset-chip ${this.isManual ? "manual" : ""}"
+              title="${this.isManual ? "Manual Hold Mode" : this.currentPresetMode}"
             >
-              ${this.isEditMode ? "✓ Done" : "✎ Edit"}
-            </button>
+              ${this.isManual ? "⚠️ Manual Hold" : `🎯 ${this.currentPresetMode}`}
+            </span>
+          </div>
+
+          <!-- Day Navigation -->
+          <div class="day-nav">
+            <button class="nav-btn" @click=${() => this.changeDay(-1)} title="Previous Day">‹</button>
+            <span class="day-label">${isViewingToday ? `Today (${dayLabel.short})` : dayLabel.short}</span>
+            <button class="nav-btn" @click=${() => this.changeDay(1)} title="Next Day">›</button>
           </div>
         </div>
 
-        <!-- Horizontal Timeline Track -->
-        <div
-          class="timeline-track-wrap ${this.isEditMode ? "editing" : ""}"
-          @pointerdown=${this.handleTrackPointerDown}
-          @pointermove=${this.handleTrackPointerMove}
-          @pointerup=${this.handleTrackPointerUp}
-        >
-          <!-- Status Overlays -->
-          ${this.isManual ? b`
-                <div class="manual-overlay">
-                  <span>⏸️ Manual Hold Active — No schedule running</span>
-                </div>
-              ` : this.isYamlSchedule ? b`
-                <div class="manual-overlay">
-                  <span>📄 YAML Schedule Active — Read-only</span>
-                </div>
-              ` : this.isForeign ? b`
-                <div class="manual-overlay">
-                  <span>⚠️ Non-HVAC Schedule Active — Read-only</span>
-                </div>
-              ` : this.scheduleNotFound ? b`
-                <div class="manual-overlay error">
-                  <span>⚠️ Schedule entity not found</span>
-                </div>
-              ` : ""}
-          <!-- Grid tick lines every 4 hours -->
-          ${[4, 8, 12, 16, 20].map((hour) => {
-      const leftPct = hour / 24 * 100;
-      return b`<div class="time-grid-line" style="left: ${leftPct}%;"></div>`;
+        <!-- Section 1: 24h Schedule Timeline -->
+        ${this.config.show_schedule !== false ? b`
+              <div class="timeline-section">
+                <div class="timeline-track-wrap">
+                  <!-- Status Overlays -->
+                  ${this.isManual ? b`<div class="overlay-msg"><span>⏸️ Manual Hold Active — No schedule running</span></div>` : this.isYamlSchedule ? b`<div class="overlay-msg"><span>📄 YAML Schedule Active — Read-only</span></div>` : this.isForeign ? b`<div class="overlay-msg"><span>⚠️ Non-HVAC Schedule Active — Read-only</span></div>` : this.scheduleNotFound ? b`<div class="overlay-msg"><span>Schedule not found for preset "${this.currentPresetMode}"</span></div>` : ""}
+
+                  <!-- Timeline Blocks -->
+                  ${dayBlocks.map((block) => {
+      const left = block.startMinutes / 1440 * 100;
+      const width = (block.endMinutes - block.startMinutes) / 1440 * 100;
+      if (block.hvac_mode === "heat_cool") {
+        return b`
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                          <div class="dual-band">
+                            <div class="band-half" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
+                              ${block.cool_to}°
+                            </div>
+                            <div class="band-half" style="background: ${getHeatColor(block.heat_to)}; color: ${getHeatTextColor(block.heat_to)};">
+                              ${block.heat_to}°
+                            </div>
+                          </div>
+                        </div>
+                      `;
+      } else if (block.hvac_mode === "heat") {
+        return b`
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                          <div class="band-single" style="background: ${getHeatColor(block.heat_to)}; color: ${getHeatTextColor(block.heat_to)};">
+                            ${block.heat_to}°
+                          </div>
+                        </div>
+                      `;
+      } else if (block.hvac_mode === "cool") {
+        return b`
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                          <div class="band-single" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
+                            ${block.cool_to}°
+                          </div>
+                        </div>
+                      `;
+      } else {
+        return b`
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                          <div class="band-single" style="background: #334155; color: #94a3b8;">
+                            OFF
+                          </div>
+                        </div>
+                      `;
+      }
     })}
 
-          <!-- Scheduled Blocks -->
-          ${blocks.map((block) => {
-      const leftPct = block.startMinutes / 1440 * 100;
-      const duration = block.endMinutes - block.startMinutes;
-      const widthPct = duration / 1440 * 100;
-      const heatColor = getHeatColor(block.heat_to, unit);
-      const heatText = getHeatTextColor(block.heat_to, unit);
-      const coolColor = getCoolColor(block.cool_to, unit);
-      const coolText = getCoolTextColor(block.cool_to, unit);
-      const tooltip = block.isGeneric ? `Non-Climate Block: No HVAC targets (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})` : block.hvac_mode === "heat_cool" ? `Dual: Heat ${block.heat_to}°, Cool ${block.cool_to}° (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})` : `${block.hvac_mode} (${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)})`;
-      return b`
-              <div
-                class="timeline-block"
-                style="left: ${leftPct}%; width: ${widthPct}%;"
-                title=${tooltip}
-                @click=${(e2) => this.handleBlockClick(e2, block)}
-              >
-                ${block.isGeneric ? b`
-                      <div class="band-generic">
-                        ${widthPct > 8 ? "No HVAC" : ""}
-                      </div>
-                    ` : block.hvac_mode === "heat_cool" ? b`
-                      <div class="band-cool" style="background-color: ${coolColor}; color: ${coolText};">
-                        ${widthPct > 5 ? `${block.cool_to}°` : ""}
-                      </div>
-                      <div class="band-heat" style="background-color: ${heatColor}; color: ${heatText};">
-                        ${widthPct > 5 ? `${block.heat_to}°` : ""}
-                      </div>
-                    ` : block.hvac_mode === "heat" ? b`
-                      <div class="band-heat" style="background-color: ${heatColor}; color: ${heatText}; flex: 1;">
-                        ${block.heat_to}°
-                      </div>
-                    ` : block.hvac_mode === "cool" ? b`
-                      <div class="band-cool" style="background-color: ${coolColor}; color: ${coolText}; flex: 1;">
-                        ${block.cool_to}°
-                      </div>
-                    ` : b`<div style="flex: 1; background: #27272a;"></div>`}
+                  <!-- NOW Needle (shown only on today's view) -->
+                  ${isViewingToday ? b`<div class="now-needle" style="left: ${nowPct}%;" title="Current Time"></div>` : ""}
+                </div>
 
-                <!-- Resize handles -->
-                <div
-                  class="h-resize-handle left"
-                  @click=${(e2) => e2.stopPropagation()}
-                  @pointerdown=${(e2) => this.handleResizePointerDown(e2, block, "resize-start")}
-                ></div>
-                <div
-                  class="h-resize-handle right"
-                  @click=${(e2) => e2.stopPropagation()}
-                  @pointerdown=${(e2) => this.handleResizePointerDown(e2, block, "resize-end")}
-                ></div>
+                <!-- Time Ticks -->
+                <div class="time-ticks">
+                  <span>12a</span>
+                  <span>4a</span>
+                  <span>8a</span>
+                  <span>12p</span>
+                  <span>4p</span>
+                  <span>8p</span>
+                  <span>12a</span>
+                </div>
               </div>
-            `;
-    })}
+            ` : ""}
 
-          <!-- Carve preview overlay -->
-          ${this.dragAction && this.dragAction.type === "create" && this.dragAction.hasDragged ? (() => {
-      const step = this.config.step_size || 15;
-      const cur = this.dragAction.currentMinute ?? this.dragAction.initialMinute;
-      const start = Math.min(this.dragAction.initialMinute, cur);
-      const end = Math.min(1440, Math.max(start + step, Math.max(this.dragAction.initialMinute, cur)));
-      const leftPct = start / 1440 * 100;
-      const widthPct = (end - start) / 1440 * 100;
-      return b`
-                  <div class="carve-overlay" style="left: ${leftPct}%; width: ${widthPct}%;">
-                    ${formatTimeDisplay(start)} – ${formatTimeDisplay(end)}
-                  </div>
-                `;
-    })() : ""}
+        <!-- Section 2: Comfort Boost Toolbar -->
+        ${this.config.show_boost !== false ? b`
+              <div class="boost-section">
+                <div class="boost-header">
+                  <span class="boost-title">🕒 Temporary Comfort Bump</span>
+                  <span class="boost-subtitle">2-hour boost • Decays back to schedule</span>
+                </div>
+                <div class="boost-controls">
+                  <button
+                    class="boost-btn boost-btn-warm"
+                    @click=${() => this.triggerComfortBoost("too_cold")}
+                    title="Applies a temporary +2°F boost that automatically decays back to schedule"
+                  >
+                    🔥 Warmer (+2°)
+                  </button>
+                  <button
+                    class="boost-btn boost-btn-cool"
+                    @click=${() => this.triggerComfortBoost("too_hot")}
+                    title="Applies a temporary -2°F cooling boost that automatically decays back to schedule"
+                  >
+                    ❄️ Cooler (-2°)
+                  </button>
 
-          <!-- Floating drag resize guide -->
-          ${this.dragAction && (this.dragAction.type === "resize-start" || this.dragAction.type === "resize-end") && this.dragAction.currentMinute !== void 0 ? (() => {
-      const leftPct = this.dragAction.currentMinute / 1440 * 100;
-      return b`
-                  <div class="drag-h-indicator" style="left: ${leftPct}%;">
-                    <div class="drag-h-line"></div>
-                    <div class="drag-h-pill">${formatTimeDisplay(this.dragAction.currentMinute)}</div>
-                  </div>
-                `;
-    })() : ""}
+                  ${hasBoost ? b`
+                        <div class="boost-pill ${currentBoost > 0 ? "warm" : "cool"}">
+                          <span>${currentBoost > 0 ? "🔥" : "❄️"} ${currentBoost > 0 ? `+${currentBoost}` : currentBoost}°</span>
+                          <button
+                            class="boost-cancel-btn"
+                            @click=${this.clearComfortBoost}
+                            title="Cancel temporary boost and return to schedule"
+                          >
+                            ✕ Cancel
+                          </button>
+                        </div>
+                      ` : ""}
+                </div>
+              </div>
+            ` : ""}
 
-          <!-- Red "NOW" needle if viewing today -->
-          ${isViewingToday ? b`<div class="now-needle" style="left: ${nowPct}%;" title="Current Time"></div>` : ""}
-        </div>
+        <!-- Section 3: Expandable Diagnostics & Attributes -->
+        ${this.config.show_diagnostics !== false ? b`
+              <div class="diagnostics-section">
+                <button
+                  class="diagnostics-toggle-btn"
+                  @click=${() => this.diagnosticsExpanded = !this.diagnosticsExpanded}
+                >
+                  <span>ℹ️ Space Details & Diagnostics</span>
+                  <span>${this.diagnosticsExpanded ? "▲ Hide" : "▼ Show"}</span>
+                </button>
 
-        <!-- Horizontal Time Axis Labels -->
-        <div class="time-axis-horizontal">
-          <span>00:00</span>
-          <span>04:00</span>
-          <span>08:00</span>
-          <span>12:00</span>
-          <span>16:00</span>
-          <span>20:00</span>
-          <span>24:00</span>
-        </div>
-
-        <!-- Edit Dialog -->
-        ${this.activeEditingBlock ? b`
-              <preset-dialog
-                .block=${this.activeEditingBlock}
-                .temperatureUnit=${this.config.temperature_unit || "°F"}
-                .minDeadband=${this.config.min_deadband || 2}
-                .minTemp=${45}
-                .maxTemp=${85}
-                @save-block=${this.handleSaveBlock}
-                @delete-block=${this.handleDeleteBlock}
-                @split-block=${this.handleSplitBlock}
-                @copy-block-to=${this.handleCopyBlockTo}
-                @close-dialog=${() => this.activeEditingBlock = null}
-              ></preset-dialog>
+                ${this.diagnosticsExpanded ? b`
+                      <div class="diagnostics-drawer">
+                        <div class="diag-grid">
+                          ${this.renderDiagnosticAttributes((stateObj == null ? void 0 : stateObj.attributes) || {})}
+                        </div>
+                        ${this.shouldShowAttribute("explanation") && ((_e = stateObj == null ? void 0 : stateObj.attributes) == null ? void 0 : _e.explanation) ? b`
+                              <div class="diag-explanation">
+                                "${stateObj.attributes.explanation}"
+                              </div>
+                            ` : ""}
+                      </div>
+                    ` : ""}
+              </div>
             ` : ""}
       </ha-card>
     `;
   }
+  shouldShowAttribute(attrKey) {
+    const list = this.config.diagnostic_attributes || [
+      "phase",
+      "active_producer",
+      "explanation",
+      "window_open"
+    ];
+    return list.includes(attrKey);
+  }
+  renderDiagnosticAttributes(attrs) {
+    const cards = [];
+    if (this.shouldShowAttribute("phase")) {
+      const rawPhase = attrs.phase || "plateau_maintenance";
+      const label = rawPhase.replace(/_/g, " ").replace(/\b\w/g, (c2) => c2.toUpperCase());
+      cards.push(b`
+        <div class="diag-card">
+          <div class="diag-label">System Phase</div>
+          <div class="diag-value" title="${label}">${label}</div>
+        </div>
+      `);
+    }
+    if (this.shouldShowAttribute("active_producer")) {
+      const prod = attrs.active_producer || "None (Idle)";
+      cards.push(b`
+        <div class="diag-card">
+          <div class="diag-label">Active Producer</div>
+          <div class="diag-value" title="${prod}">${prod}</div>
+        </div>
+      `);
+    }
+    if (this.shouldShowAttribute("window_open")) {
+      const isOpen = Boolean(attrs.window_open);
+      cards.push(b`
+        <div class="diag-card">
+          <div class="diag-label">Window Interlock</div>
+          <div class="diag-value" style="color: ${isOpen ? "#f87171" : "#34d399"};">
+            ${isOpen ? "⚠️ Open (Paused)" : "Closed"}
+          </div>
+        </div>
+      `);
+    }
+    if (this.shouldShowAttribute("active_delivery_units")) {
+      const units = attrs.active_delivery_units || [];
+      const label = units.length > 0 ? units.join(", ") : "None";
+      cards.push(b`
+        <div class="diag-card">
+          <div class="diag-label">Delivery Units</div>
+          <div class="diag-value" title="${label}">${label}</div>
+        </div>
+      `);
+    }
+    if (this.shouldShowAttribute("cycling_emitters")) {
+      const cycling = attrs.cycling_emitters || [];
+      const label = cycling.length > 0 ? cycling.join(", ") : "None";
+      cards.push(b`
+        <div class="diag-card">
+          <div class="diag-label">Cycling Emitters</div>
+          <div class="diag-value" title="${label}">${label}</div>
+        </div>
+      `);
+    }
+    if (this.shouldShowAttribute("in_recovery")) {
+      const inRec = Boolean(attrs.in_recovery);
+      cards.push(b`
+        <div class="diag-card">
+          <div class="diag-label">Recovery State</div>
+          <div class="diag-value">${inRec ? "In Recovery" : "Normal"}</div>
+        </div>
+      `);
+    }
+    return cards;
+  }
 };
-_ClimatePresetTimeline.styles = i$3`
+_HvacFusionStatusCard.styles = i$3`
     :host {
       display: block;
       font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
       color: var(--primary-text-color, #e1e7ec);
-      user-select: none;
-      -webkit-user-select: none;
     }
 
     ha-card {
-      background: var(--ha-card-background, var(--card-background-color, #181c24));
-      border-radius: var(--ha-card-border-radius, 16px);
-      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
+      background: var(--card-background-color, var(--ha-card-background, #1e293b));
+      border-radius: var(--ha-card-border-radius, 12px);
+      box-shadow: var(--ha-card-box-shadow, 0 4px 6px -1px rgba(0, 0, 0, 0.1));
       padding: 16px;
       overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
+      box-sizing: border-box;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
     }
 
-    /* Header */
-    .header-row {
+    /* Primary Header */
+    .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      margin-bottom: 14px;
+      gap: 12px;
       flex-wrap: nowrap;
-      gap: 8px;
-      min-width: 0;
     }
 
-    .title-box {
+    .header-left {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -4026,257 +3904,136 @@ _ClimatePresetTimeline.styles = i$3`
     }
 
     .card-title {
-      font-size: 1.1rem;
+      font-size: 1.05rem;
       font-weight: 600;
       color: var(--primary-text-color, #ffffff);
-      margin: 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      min-width: 0;
-      flex-shrink: 1;
     }
 
     .preset-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 9999px;
       font-size: 0.75rem;
       font-weight: 600;
-      padding: 3px 9px;
-      border-radius: 12px;
       background: rgba(56, 189, 248, 0.15);
-      color: var(--primary-color, #38bdf8);
+      color: #38bdf8;
       border: 1px solid rgba(56, 189, 248, 0.3);
-      text-transform: capitalize;
       white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 160px;
-      flex-shrink: 2;
+      flex-shrink: 0;
     }
+
     .preset-chip.manual {
-      background: rgba(234, 179, 8, 0.15);
-      color: #eab308;
-      border-color: rgba(234, 179, 8, 0.3);
-    }
-    .yaml-badge {
-      font-size: 0.72rem;
-      padding: 3px 8px;
-      border-radius: 6px;
-      background: rgba(234, 179, 8, 0.15);
-      color: #eab308;
-      border: 1px solid rgba(234, 179, 8, 0.3);
-      white-space: nowrap;
-      flex-shrink: 0;
+      background: rgba(245, 158, 11, 0.15);
+      color: #f59e0b;
+      border-color: rgba(245, 158, 11, 0.3);
     }
 
-    .header-controls {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-shrink: 0;
-    }
-
-    /* Day Navigation */
     .day-nav {
       display: flex;
       align-items: center;
-      gap: 2px;
       background: rgba(255, 255, 255, 0.05);
       border-radius: 8px;
-      padding: 2px 4px;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
+      overflow: hidden;
       flex-shrink: 0;
     }
 
     .nav-btn {
-      background: transparent;
+      background: none;
       border: none;
       color: var(--secondary-text-color, #9ca3af);
       font-size: 1rem;
+      padding: 4px 8px;
       cursor: pointer;
-      padding: 2px 6px;
-      border-radius: 4px;
-      transition: all 0.15s;
+      line-height: 1;
+      transition: background 0.15s;
     }
+
     .nav-btn:hover {
       background: rgba(255, 255, 255, 0.1);
-      color: #fff;
+      color: var(--primary-text-color, #ffffff);
     }
 
     .day-label {
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       font-weight: 600;
       padding: 0 4px;
-      min-width: 70px;
+      min-width: 60px;
       text-align: center;
-      white-space: nowrap;
+      color: var(--primary-text-color, #ffffff);
     }
 
-    .edit-toggle-btn {
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      color: var(--secondary-text-color, #9ca3af);
-      font-size: 0.78rem;
-      font-weight: 600;
-      padding: 4px 10px;
-      border-radius: 6px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      transition: all 0.15s ease-in-out;
-    }
-    .edit-toggle-btn:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.12);
-      color: #fff;
-    }
-    .edit-toggle-btn.active {
-      background: rgba(56, 189, 248, 0.18);
-      border-color: #38bdf8;
-      color: #38bdf8;
-    }
-    .edit-toggle-btn:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
+    /* Section 1: Timeline Track */
+    .timeline-section {
+      margin-bottom: 14px;
     }
 
-    /* Horizontal Track Container */
     .timeline-track-wrap {
       position: relative;
-      width: 100%;
-      height: 64px;
-      background: rgba(0, 0, 0, 0.3);
-      border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      height: 38px;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
       overflow: hidden;
-      touch-action: none;
-      cursor: default;
-      transition: border-color 0.2s;
-    }
-    .timeline-track-wrap.editing {
-      cursor: crosshair;
-      border-color: rgba(56, 189, 248, 0.45);
-    }
-    .timeline-track-wrap.editing .timeline-block {
-      cursor: pointer;
-    }
-    .timeline-track-wrap:not(.editing) .timeline-block {
-      cursor: default;
-    }
-    .timeline-track-wrap:not(.editing) .h-resize-handle {
-      display: none;
+      box-sizing: border-box;
     }
 
-    .manual-overlay {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      background: rgba(24, 28, 36, 0.72);
-      color: #eab308;
-      font-size: 0.85rem;
-      font-weight: 500;
-      pointer-events: none;
-      z-index: 15;
-    }
-    .manual-overlay.error {
-      color: #f87171;
-    }
-
-    /* Horizontal Grid Ticks (every 4 hours) */
-    .time-grid-line {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 1px;
-      background: rgba(255, 255, 255, 0.05);
-      pointer-events: none;
-    }
-
-    /* Blocks */
     .timeline-block {
       position: absolute;
-      top: 2px;
-      bottom: 2px;
-      border-radius: 6px;
-      overflow: hidden;
-      cursor: pointer;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      box-sizing: border-box;
-      display: flex;
-      flex-direction: column;
-      transition: border-color 0.15s;
-    }
-    .timeline-block:hover {
-      border-color: rgba(255, 255, 255, 0.5);
-      z-index: 10;
-    }
-
-    .band-cool,
-    .band-heat {
-      flex: 1;
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.72rem;
-      font-weight: 700;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      min-height: 0;
-    }
-
-    .band-generic {
-      flex: 1;
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.70rem;
-      font-weight: 600;
-      color: #cbd5e1;
-      background: rgba(100, 116, 139, 0.35);
-      border: 1px dashed rgba(148, 163, 184, 0.7);
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      min-height: 0;
-    }
-
-    /* Horizontal Resize Handles (Left / Right edges) */
-    .h-resize-handle {
-      position: absolute;
       top: 0;
       bottom: 0;
-      width: 10px;
-      z-index: 20;
-      cursor: ew-resize;
-    }
-    .h-resize-handle.left {
-      left: 0;
-    }
-    .h-resize-handle.right {
-      right: 0;
-    }
-    .h-resize-handle:hover {
-      background: rgba(255, 255, 255, 0.25);
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 0 4px;
+      box-sizing: border-box;
+      pointer-events: none;
     }
 
-    /* NOW Needle */
+    .dual-band {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      width: 100%;
+    }
+
+    .band-half {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .band-single {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+
     .now-needle {
       position: absolute;
       top: 0;
       bottom: 0;
       width: 2px;
       background: #ffffff;
-      box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.7), 0 0 6px 1px rgba(244, 63, 94, 0.85);
-      z-index: 30;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8), -1px 0 0 rgba(0, 0, 0, 0.8), 1px 0 0 rgba(0, 0, 0, 0.8);
+      z-index: 10;
       pointer-events: none;
     }
+
     .now-needle::after {
       content: '';
       position: absolute;
@@ -4288,125 +4045,329 @@ _ClimatePresetTimeline.styles = i$3`
       border-left: 4px solid transparent;
       border-right: 4px solid transparent;
       border-top: 5px solid #ffffff;
-      filter: drop-shadow(0 0 2px rgba(244, 63, 94, 0.9));
     }
 
-    /* Time Axis Labels (Under track) */
-    .time-axis-horizontal {
+    .time-ticks {
       display: flex;
       justify-content: space-between;
-      font-size: 0.72rem;
-      color: var(--secondary-text-color, #71717a);
+      margin-top: 4px;
+      font-size: 0.68rem;
+      color: var(--secondary-text-color, #9ca3af);
       padding: 0 2px;
     }
 
-    /* Carve preview overlay */
-    .carve-overlay {
+    .overlay-msg {
       position: absolute;
-      top: 2px;
-      bottom: 2px;
-      border: 2px dashed var(--primary-color, #38bdf8);
-      background: rgba(56, 189, 248, 0.28);
-      border-radius: 6px;
-      pointer-events: none;
-      z-index: 25;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.85);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.72rem;
-      font-weight: 700;
-      color: #fff;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--secondary-text-color, #cbd5e1);
+      z-index: 5;
     }
 
-    /* Floating drag time badge */
-    .drag-h-indicator {
-      position: absolute;
-      top: -8px;
-      bottom: -8px;
-      width: 0;
-      pointer-events: none;
-      z-index: 50;
+    /* Section 2: Comfort Boost Toolbar */
+    .boost-section {
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 8px;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.06));
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+
+    .boost-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+
+    .boost-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--secondary-text-color, #94a3b8);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .boost-subtitle {
+      font-size: 0.72rem;
+      color: var(--secondary-text-color, #64748b);
+    }
+
+    .boost-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: nowrap;
+      width: 100%;
+    }
+
+    .boost-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s ease-in-out;
+      white-space: nowrap;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .boost-btn-warm {
+      background: rgba(239, 68, 68, 0.12);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.25);
+    }
+
+    .boost-btn-warm:hover {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: #ef4444;
+      color: #ffffff;
+    }
+
+    .boost-btn-cool {
+      background: rgba(56, 189, 248, 0.12);
+      color: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.25);
+    }
+
+    .boost-btn-cool:hover {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: #38bdf8;
+      color: #ffffff;
+    }
+
+    .boost-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+
+    .boost-pill.warm {
+      background: rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+
+    .boost-pill.cool {
+      background: rgba(56, 189, 248, 0.2);
+      color: #7dd3fc;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+
+    .boost-cancel-btn {
+      background: none;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 0.8rem;
+      padding: 0 0 0 2px;
+      line-height: 1;
+      opacity: 0.8;
+      transition: opacity 0.15s;
+    }
+
+    .boost-cancel-btn:hover {
+      opacity: 1;
+    }
+
+    /* Section 3: Expandable Diagnostics */
+    .diagnostics-section {
+      border-top: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
+      padding-top: 8px;
+    }
+
+    .diagnostics-toggle-btn {
+      width: 100%;
+      background: none;
+      border: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 2px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--secondary-text-color, #94a3b8);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .diagnostics-toggle-btn:hover {
+      color: var(--primary-text-color, #ffffff);
+    }
+
+    .diagnostics-drawer {
       display: flex;
       flex-direction: column;
-      align-items: center;
-      transform: translateX(-50%);
+      gap: 8px;
+      padding-top: 8px;
+      animation: fadeIn 0.15s ease-in-out;
     }
 
-    .drag-h-line {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 2px;
-      background: var(--primary-color, #38bdf8);
-      box-shadow: 0 0 8px rgba(56, 189, 248, 0.9);
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .drag-h-pill {
-      position: relative;
-      top: -24px;
-      background: #090d16;
-      color: #38bdf8;
-      border: 1.5px solid #38bdf8;
-      padding: 2px 7px;
+    .diag-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 8px;
+    }
+
+    .diag-card {
+      background: rgba(255, 255, 255, 0.03);
       border-radius: 6px;
-      font-size: 0.74rem;
-      font-weight: 700;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.8);
+      padding: 6px 8px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .diag-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--secondary-text-color, #94a3b8);
+      margin-bottom: 2px;
+    }
+
+    .diag-value {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--primary-text-color, #f1f5f9);
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .diag-explanation {
+      font-size: 0.75rem;
+      font-style: italic;
+      color: var(--secondary-text-color, #cbd5e1);
+      background: rgba(255, 255, 255, 0.02);
+      border-left: 2px solid var(--primary-color, #38bdf8);
+      padding: 6px 10px;
+      border-radius: 0 4px 4px 0;
+      line-height: 1.35;
     }
   `;
-let ClimatePresetTimeline = _ClimatePresetTimeline;
+let HvacFusionStatusCard = _HvacFusionStatusCard;
 __decorateClass([
   n2({ attribute: false })
-], ClimatePresetTimeline.prototype, "hass");
+], HvacFusionStatusCard.prototype, "hass");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "config");
+], HvacFusionStatusCard.prototype, "config");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "schedules");
+], HvacFusionStatusCard.prototype, "schedules");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "activeScheduleId");
+], HvacFusionStatusCard.prototype, "activeScheduleId");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "currentPresetMode");
+], HvacFusionStatusCard.prototype, "currentPresetMode");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "isManual");
+], HvacFusionStatusCard.prototype, "isManual");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "isEditMode");
+], HvacFusionStatusCard.prototype, "isYamlSchedule");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "isYamlSchedule");
+], HvacFusionStatusCard.prototype, "isForeign");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "isForeign");
+], HvacFusionStatusCard.prototype, "scheduleNotFound");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "scheduleNotFound");
+], HvacFusionStatusCard.prototype, "blocksByDay");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "blocksByDay");
+], HvacFusionStatusCard.prototype, "selectedDayIndex");
 __decorateClass([
   r()
-], ClimatePresetTimeline.prototype, "selectedDayIndex");
-__decorateClass([
-  r()
-], ClimatePresetTimeline.prototype, "activeEditingBlock");
-__decorateClass([
-  r()
-], ClimatePresetTimeline.prototype, "isSaving");
+], HvacFusionStatusCard.prototype, "diagnosticsExpanded");
+if (!customElements.get("hvac-fusion-status-card")) {
+  customElements.define("hvac-fusion-status-card", HvacFusionStatusCard);
+}
 if (!customElements.get("climate-preset-timeline")) {
-  customElements.define("climate-preset-timeline", ClimatePresetTimeline);
+  customElements.define(
+    "climate-preset-timeline",
+    class extends HvacFusionStatusCard {
+    }
+  );
 }
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: "climate-preset-timeline",
-  name: "Climate Preset 1-day Timeline",
-  description: "Single-day horizontal timeline tracker bound to a space climate preset schedule.",
-  preview: true
+  type: "hvac-fusion-status-card",
+  name: "HVAC Fusion Status Card",
+  description: "Unified space status card with 24-hour preset schedule, temporary comfort bump, and room diagnostics.",
+  preview: true,
+  getEntitySuggestion: (hass, entityId) => {
+    var _a2, _b;
+    const state = (_a2 = hass == null ? void 0 : hass.states) == null ? void 0 : _a2[entityId];
+    if (!entityId.startsWith("climate.") || ((_b = state == null ? void 0 : state.attributes) == null ? void 0 : _b.current_boost) === void 0) {
+      return null;
+    }
+    return {
+      config: {
+        type: "custom:hvac-fusion-status-card",
+        entity: entityId
+      }
+    };
+  }
+});
+window.customCards.push({
+  type: "hvac-fusion-space-stack",
+  name: "HVAC Fusion Space Stack (Tile + Status)",
+  description: "Pre-configured 2-card vertical stack: Native Tile Card (thermostat & presets) + HVAC Fusion Status Card.",
+  preview: true,
+  getEntitySuggestion: (hass, entityId) => {
+    var _a2, _b;
+    const state = (_a2 = hass == null ? void 0 : hass.states) == null ? void 0 : _a2[entityId];
+    if (!entityId.startsWith("climate.") || ((_b = state == null ? void 0 : state.attributes) == null ? void 0 : _b.current_boost) === void 0) {
+      return null;
+    }
+    return {
+      config: {
+        type: "vertical-stack",
+        cards: [
+          {
+            type: "tile",
+            entity: entityId,
+            features: [
+              {
+                type: "climate-preset-modes",
+                style: "dropdown"
+              }
+            ]
+          },
+          {
+            type: "custom:hvac-fusion-status-card",
+            entity: entityId
+          }
+        ]
+      }
+    };
+  }
 });
 export {
   DAYS_OF_WEEK,

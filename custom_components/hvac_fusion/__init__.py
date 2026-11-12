@@ -785,7 +785,7 @@ class HvacFusionManager:
             )
             return
 
-        _LOGGER.info(
+        _LOGGER.debug(
             "Evaluate, outdoor %s, conditions %s, plan %s",
             str(outdoor_temp),
             str(space_conditions),
@@ -1446,7 +1446,14 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
     async def handle_get_report(call: ServiceCall) -> ServiceResponse:
         resp = {"directives": "", "diagnostics": ""}
-        manager = hass.data[DOMAIN].get("manager")
+        manager = next(
+            (
+                v
+                for v in hass.data.get(DOMAIN, {}).values()
+                if isinstance(v, HvacFusionManager)
+            ),
+            None,
+        )
         if not manager or not manager.last_plan:
             return resp
         plan = manager.last_plan
@@ -1498,9 +1505,13 @@ def async_register_services(hass: HomeAssistant) -> None:
         async def handle_acquire_lock(call: ServiceCall) -> None:
             schedule_id = call.data.get("schedule_id", "")
             duration = int(call.data.get("duration", 300))
-            for item in hass.data.get(DOMAIN, {}).values():
-                if isinstance(item, HvacFusionManager):
-                    item.acquire_schedule_lock(schedule_id, duration)
+            unique_managers = {
+                item
+                for item in hass.data.get(DOMAIN, {}).values()
+                if isinstance(item, HvacFusionManager)
+            }
+            for item in unique_managers:
+                item.acquire_schedule_lock(schedule_id, duration)
 
         hass.services.async_register(
             DOMAIN,
@@ -1512,14 +1523,88 @@ def async_register_services(hass: HomeAssistant) -> None:
 
         async def handle_release_lock(call: ServiceCall) -> None:
             schedule_id = call.data.get("schedule_id", "")
-            for item in hass.data.get(DOMAIN, {}).values():
-                if isinstance(item, HvacFusionManager):
-                    item.release_schedule_lock(schedule_id)
+            unique_managers = {
+                item
+                for item in hass.data.get(DOMAIN, {}).values()
+                if isinstance(item, HvacFusionManager)
+            }
+            for item in unique_managers:
+                item.release_schedule_lock(schedule_id)
 
         hass.services.async_register(
             DOMAIN,
             "release_schedule_lock",
             handle_release_lock,
+        )
+
+    if not hass.services.has_service(DOMAIN, "comfort_boost"):
+
+        async def handle_comfort_boost(call: ServiceCall) -> None:
+            feeling = str(call.data.get("feeling", "too_cold")).lower()
+            delta_f = float(call.data.get("delta_f", 2.0))
+            duration_minutes = int(call.data.get("duration_minutes", 120))
+            decay = bool(call.data.get("decay", True))
+
+            target_entities = call.data.get("entity_id")
+            if isinstance(target_entities, str):
+                target_entities = [target_entities]
+            elif target_entities is None:
+                target_entities = []
+
+            unique_managers = {
+                item
+                for item in hass.data.get(DOMAIN, {}).values()
+                if isinstance(item, HvacFusionManager)
+            }
+            for item in unique_managers:
+                for space_id, climate_entity in item.space_entities.items():
+                    c_id = getattr(climate_entity, "entity_id", None)
+                    if (
+                        not target_entities
+                        or (c_id and c_id in target_entities)
+                        or space_id in target_entities
+                    ):
+                        await climate_entity.async_comfort_boost(
+                            feeling=feeling,
+                            delta_f=delta_f,
+                            duration_minutes=duration_minutes,
+                            decay=decay,
+                        )
+
+        hass.services.async_register(
+            DOMAIN,
+            "comfort_boost",
+            handle_comfort_boost,
+        )
+
+    if not hass.services.has_service(DOMAIN, "clear_comfort_boost"):
+
+        async def handle_clear_boost(call: ServiceCall) -> None:
+            target_entities = call.data.get("entity_id")
+            if isinstance(target_entities, str):
+                target_entities = [target_entities]
+            elif target_entities is None:
+                target_entities = []
+
+            unique_managers = {
+                item
+                for item in hass.data.get(DOMAIN, {}).values()
+                if isinstance(item, HvacFusionManager)
+            }
+            for item in unique_managers:
+                for space_id, climate_entity in item.space_entities.items():
+                    c_id = getattr(climate_entity, "entity_id", None)
+                    if (
+                        not target_entities
+                        or (c_id and c_id in target_entities)
+                        or space_id in target_entities
+                    ):
+                        await climate_entity.async_clear_comfort_boost()
+
+        hass.services.async_register(
+            DOMAIN,
+            "clear_comfort_boost",
+            handle_clear_boost,
         )
 
 
@@ -1540,7 +1625,6 @@ async def async_setup_entry(
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = manager
-    hass.data[DOMAIN]["manager"] = manager
 
     await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
 

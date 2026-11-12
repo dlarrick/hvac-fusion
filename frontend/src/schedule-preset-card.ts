@@ -287,8 +287,6 @@ export class SchedulePresetCard extends LitElement {
       color: var(--secondary-text-color, #a1a1aa);
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       background: rgba(255, 255, 255, 0.02);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
     }
     .day-header.today {
       color: var(--primary-color, #38bdf8);
@@ -423,8 +421,6 @@ export class SchedulePresetCard extends LitElement {
       font-size: 0.68rem;
       font-weight: 600;
       color: #cbd5e1;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
     }
 
     /* Carve preview overlay */

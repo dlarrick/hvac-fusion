@@ -66,7 +66,7 @@ A horizontal daily timeline strip designed to sit on space control dashboards an
 
 <img src="docs/images/climate_preset_timeline.png" alt="Climate Card with Companion Preset Timeline" width="430">
 
-* **Live "NOW" Needle**: An active red needle indicates the exact current time of day and updates every 30 seconds.
+* **Live "NOW" Needle**: An active needle indicates the exact current time of day and updates every 30 seconds.
 * **Dynamic Preset Tracking**: Automatically reads the climate entity's current preset and active schedule. When the space is in manual mode (via manual temperature adjustment or selecting the `manual` preset), the card displays a yellow `⏸️ Manual Hold Active` banner.
 * **Day Navigation**: Flip between days (`‹ Previous Day` / `Next Day ›`) to inspect upcoming routines.
 * **Inline Day Editing**: Click `[ ✎ Edit ]` to edit, adjust, or insert preset blocks directly from the 1-day strip without navigating to settings.

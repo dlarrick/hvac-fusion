@@ -68,6 +68,14 @@ export interface CardConfig {
   max_temp?: number;
 }
 
+export interface StatusCardConfig extends CardConfig {
+  show_schedule?: boolean;
+  show_boost?: boolean;
+  show_diagnostics?: boolean;
+  diagnostics_expanded_by_default?: boolean;
+  diagnostic_attributes?: string[];
+}
+
 export interface InternalBlock {
   id: string;
   day: ScheduleDay;
