@@ -39,7 +39,7 @@ Bundles two companion cards in a single unified bundle (`dist/hvac-fusion-cards.
 
 <img src="../docs/images/climate_preset_timeline.png" alt="Climate Card with Companion Preset Timeline" width="430">
 
-* **Live "NOW" Needle**: An active red needle indicates current time of day, updating every 30 seconds.
+* **Live "NOW" Needle**: An active needle indicates current time of day, updating every 30 seconds.
 * **Active Preset Tracking**: Reads the target space's climate entity (`climate.<space_id>_space`) and displays the active preset badge.
 * **Manual Hold Banner**: Displays `⏸️ Manual Hold Active — No schedule running` whenever the space is in manual mode (via manual setpoint adjustment or selecting the `manual` preset).
 * **Day Navigation**: Flip between days (`‹ Previous Day` / `Next Day ›`) to inspect upcoming routines.

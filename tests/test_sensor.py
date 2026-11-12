@@ -285,3 +285,160 @@ async def test_sensor_immediate_update_on_options_flow_reload(
     assert boiler_state is not None
     assert hp_state.state in ("idle", "heating", "cooling", "locked_out")
     assert boiler_state.state in ("idle", "heating")
+
+
+@pytest.mark.asyncio
+async def test_producer_sensor_active_delivery_units_no_cross_contamination(
+    hass: HomeAssistant,
+) -> None:
+    """Test that producer status sensors strictly isolate their own delivery units across multiple producer types."""
+    from unittest.mock import MagicMock
+    from custom_components.hvac_fusion.const import (
+        CONF_EMITTERS,
+        CONF_PRODUCER,
+        CONF_SPACES,
+        CONF_TEMP_SENSOR,
+        CONF_ZONE_ID,
+    )
+    from homeassistant.const import CONF_ENTITY_ID, CONF_ID
+
+    conf = {
+        CONF_NAME: "Multi-Producer Multi-Emitter System",
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {
+            CONF_ELECTRIC_COST_PER_KWH: 0.25,
+            CONF_GAS_COST_PER_THERM: 1.50,
+        },
+        CONF_PRODUCERS: {
+            "hp1": {
+                CONF_TYPE: "inverter_heat_pump",
+                CONF_PROFILE: "mitsubishi/mxz_xcxxnahz2",
+            },
+            "hp2": {
+                CONF_TYPE: "inverter_heat_pump",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+            },
+            "boiler": {
+                CONF_TYPE: "modulating_boiler",
+                CONF_NOMINAL_BTU: 100000.0,
+                CONF_FUEL_TYPE: "natural_gas",
+            },
+        },
+        CONF_SPACES: [
+            {
+                CONF_ID: "great_room",
+                CONF_NAME: "Great Room",
+                CONF_TEMP_SENSOR: "sensor.great_room_temp",
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp1",
+                        CONF_ENTITY_ID: "climate.great_room_hp1_a",
+                        CONF_NOMINAL_BTU: 12000.0,
+                    },
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp1",
+                        CONF_ENTITY_ID: "climate.great_room_hp1_b",
+                        CONF_NOMINAL_BTU: 9000.0,
+                    },
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp2",
+                        CONF_ENTITY_ID: "climate.great_room_hp2_a",
+                        CONF_NOMINAL_BTU: 12000.0,
+                    },
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp2",
+                        CONF_ENTITY_ID: "climate.great_room_hp2_b",
+                        CONF_NOMINAL_BTU: 9000.0,
+                    },
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "boiler",
+                        CONF_ENTITY_ID: "climate.great_room_rad_a",
+                        CONF_ZONE_ID: "z1",
+                    },
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "boiler",
+                        CONF_ENTITY_ID: "climate.great_room_rad_b",
+                        CONF_ZONE_ID: "z2",
+                    },
+                ],
+            },
+            {
+                CONF_ID: "bedroom",
+                CONF_NAME: "Bedroom",
+                CONF_TEMP_SENSOR: "sensor.bedroom_temp",
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp1",
+                        CONF_ENTITY_ID: "climate.bedroom_hp1",
+                        CONF_NOMINAL_BTU: 9000.0,
+                    },
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "boiler",
+                        CONF_ENTITY_ID: "climate.bedroom_rad",
+                        CONF_ZONE_ID: "z3",
+                    },
+                ],
+            },
+        ],
+    }
+
+    manager = HvacFusionManager(hass, conf, entry_id="test_multi_prod")
+    await manager.async_init()
+
+    producers_by_id = {p.id: p for p in manager.topology.producers}
+    hp1_sensor = HvacFusionProducerSensor(manager, producers_by_id["hp1"])
+    hp2_sensor = HvacFusionProducerSensor(manager, producers_by_id["hp2"])
+    boiler_sensor = HvacFusionProducerSensor(manager, producers_by_id["boiler"])
+
+    # Mock a dispatch plan where great_room calls hp1, but has foreign emitters in active_delivery_unit_ids
+    # and bedroom calls boiler, but also has foreign emitters in active_delivery_unit_ids
+    great_room_dir = MagicMock()
+    great_room_dir.active_producer_id = "hp1"
+    great_room_dir.active_delivery_unit_ids = [
+        "great_room_hp1_0",
+        "great_room_hp1_1",
+        "great_room_hp2_2",
+        "great_room_boiler_4",
+    ]
+
+    bedroom_dir = MagicMock()
+    bedroom_dir.active_producer_id = "boiler"
+    bedroom_dir.active_delivery_unit_ids = [
+        "bedroom_hp1_0",
+        "bedroom_boiler_1",
+    ]
+
+    mock_plan = MagicMock()
+    mock_plan.producer_directives = {}
+    mock_plan.space_directives = {
+        "great_room": great_room_dir,
+        "bedroom": bedroom_dir,
+    }
+
+    manager.last_plan = mock_plan
+
+    # Verify hp1 attributes
+    hp1_attrs = hp1_sensor.extra_state_attributes
+    assert hp1_attrs["active_spaces"] == ["great_room"]
+    assert hp1_attrs["active_delivery_units"] == [
+        "great_room_hp1_0",
+        "great_room_hp1_1",
+    ]
+
+    # Verify hp2 attributes (not called by any space)
+    hp2_attrs = hp2_sensor.extra_state_attributes
+    assert hp2_attrs["active_spaces"] == []
+    assert hp2_attrs["active_delivery_units"] == []
+
+    # Verify boiler attributes
+    boiler_attrs = boiler_sensor.extra_state_attributes
+    assert boiler_attrs["active_spaces"] == ["bedroom"]
+    assert boiler_attrs["active_delivery_units"] == ["bedroom_boiler_1"]

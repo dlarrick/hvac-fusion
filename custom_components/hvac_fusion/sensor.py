@@ -21,6 +21,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
+from . import get_manager
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ async def async_setup_platform(
     if DOMAIN not in hass.data:
         return
 
-    manager = hass.data[DOMAIN].get("manager")
+    manager = get_manager(hass)
     if not manager:
         return
 
@@ -204,6 +205,14 @@ class HvacFusionProducerSensor(HvacFusionSensorBase):
         # Determine active spaces and delivery units from last plan
         active_spaces: list[str] = []
         active_delivery_units: list[str] = []
+
+        producer_delivery_unit_ids: set[str] = set()
+        if self.manager.topology:
+            for space in self.manager.topology.spaces:
+                for emitter in space.emitters:
+                    if getattr(emitter, "producer_id", None) == self.producer.id:
+                        producer_delivery_unit_ids.add(emitter.id)
+
         p_dir = None
         if self.manager.last_plan:
             p_dir = self.manager.last_plan.producer_directives.get(self.producer.id)
@@ -213,7 +222,9 @@ class HvacFusionProducerSensor(HvacFusionSensorBase):
                 if s_dir.active_producer_id == self.producer.id:
                     if s_id not in active_spaces:
                         active_spaces.append(s_id)
-                    active_delivery_units.extend(s_dir.active_delivery_unit_ids)
+                    for u_id in s_dir.active_delivery_unit_ids:
+                        if u_id in producer_delivery_unit_ids:
+                            active_delivery_units.append(u_id)
 
         attrs["active_spaces"] = sorted(active_spaces)
         attrs["active_delivery_units"] = sorted(set(active_delivery_units))

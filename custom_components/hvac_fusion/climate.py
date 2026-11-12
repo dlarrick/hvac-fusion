@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 import logging
+import math
 from typing import Any
 
 from homeassistant.components.climate import (
@@ -25,11 +28,13 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.util import dt as dt_util
 
 from hvac_crossover import Diagnostics, HvacAction, SpaceDirective
 
+from . import get_manager
 from .const import (
     CONF_PRESETS,
     CONF_SPACES,
@@ -52,7 +57,9 @@ async def async_setup_platform(
     if discovery_info is None or DOMAIN not in hass.data:
         return
 
-    manager = hass.data[DOMAIN]["manager"]
+    manager = get_manager(hass)
+    if not manager:
+        return
     entities = []
 
     spaces_conf = getattr(manager, "spaces_config", manager.conf.get(CONF_SPACES, []))
@@ -83,6 +90,38 @@ async def async_setup_entry(
 
     # Trigger initial evaluation once entities are added
     hass.async_create_task(manager.async_evaluate())
+
+
+@dataclass
+class ComfortBoostExtraStoredData(ExtraStoredData):
+    """Internal comfort boost state persisted across Home Assistant restarts."""
+
+    start_time: str | None
+    end_time: str | None
+    delta_f: float
+    duration_minutes: int
+    decay: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the stored data."""
+        return {
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "delta_f": self.delta_f,
+            "duration_minutes": self.duration_minutes,
+            "decay": self.decay,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ComfortBoostExtraStoredData:
+        """Initialize from a dict."""
+        return cls(
+            start_time=data.get("start_time"),
+            end_time=data.get("end_time"),
+            delta_f=float(data.get("delta_f", 0.0)),
+            duration_minutes=int(data.get("duration_minutes", 120)),
+            decay=bool(data.get("decay", True)),
+        )
 
 
 class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
@@ -124,6 +163,13 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         self._target_temp_low = DEFAULT_HEAT_TO
         self._target_temp_high = DEFAULT_COOL_TO
         self._target_temp = DEFAULT_HEAT_TO
+
+        # Comfort boost state (UTC anchored)
+        self._boost_start_time: datetime | None = None
+        self._boost_end_time: datetime | None = None
+        self._boost_delta_f: float = 0.0
+        self._boost_duration_minutes: int = 120
+        self._boost_decay: bool = True
 
         self._active_delivery_units: list[str] = []
         self._active_producer: str | None = None
@@ -173,6 +219,48 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
                 except (ValueError, TypeError):
                     pass
 
+            # Restore comfort boost from extra_restore_state_data (or fallback to last_state)
+            last_start = None
+            last_end = None
+            delta_f = 0.0
+            duration_minutes = 120
+            decay = True
+
+            extra_data = await self.async_get_last_extra_data()
+            if extra_data and hasattr(extra_data, "as_dict"):
+                data_dict = extra_data.as_dict()
+                last_start = data_dict.get("start_time")
+                last_end = data_dict.get("end_time")
+                delta_f = float(data_dict.get("delta_f", 0.0))
+                duration_minutes = int(data_dict.get("duration_minutes", 120))
+                decay = bool(data_dict.get("decay", True))
+            elif last_state and "boost_end_time" in last_state.attributes:
+                last_start = last_state.attributes.get("boost_start_time")
+                last_end = last_state.attributes.get("boost_end_time")
+                delta_f = float(last_state.attributes.get("boost_delta_f", 0.0))
+                duration_minutes = int(
+                    last_state.attributes.get("boost_duration_minutes", 120)
+                )
+                decay = bool(last_state.attributes.get("boost_decay", True))
+
+            if last_end and last_start:
+                try:
+                    start_dt = dt_util.parse_datetime(last_start)
+                    end_dt = dt_util.parse_datetime(last_end)
+                    now = dt_util.utcnow()
+                    if start_dt and end_dt and start_dt <= now < end_dt:
+                        self._boost_start_time = start_dt
+                        self._boost_end_time = end_dt
+                        self._boost_delta_f = delta_f
+                        self._boost_duration_minutes = duration_minutes
+                        self._boost_decay = decay
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Could not restore comfort boost for %s: %s",
+                        self._attr_name,
+                        err,
+                    )
+
         if self._attr_preset_mode != PRESET_MANUAL:
             await self.async_update_from_schedule()
 
@@ -197,23 +285,82 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         return features
 
     @property
+    def boost_active(self) -> bool:
+        """Returns True if a comfort boost is currently active."""
+        if not self._boost_start_time or not self._boost_end_time:
+            return False
+        now = dt_util.utcnow()
+        return self._boost_start_time <= now < self._boost_end_time
+
+    @property
+    def boost_feeling(self) -> str | None:
+        """Returns 'too_cold' (warmer), 'too_hot' (cooler), or None if inactive."""
+        if not self.boost_active:
+            return None
+        return "too_cold" if self._boost_delta_f > 0 else "too_hot"
+
+    @property
+    def boost_remaining_minutes(self) -> int:
+        """Returns remaining active minutes for the current boost."""
+        if not self.boost_active or not self._boost_end_time:
+            return 0
+        now = dt_util.utcnow()
+        return max(0, math.ceil((self._boost_end_time - now).total_seconds() / 60))
+
+    @property
+    def boost_current_offset(self) -> float:
+        """Returns current temperature shift in °F taking linear decay into account."""
+        if (
+            not self.boost_active
+            or not self._boost_start_time
+            or not self._boost_end_time
+        ):
+            return 0.0
+        if not self._boost_decay:
+            return self._boost_delta_f
+
+        now = dt_util.utcnow()
+        total_sec = (self._boost_end_time - self._boost_start_time).total_seconds()
+        rem_sec = max(0.0, (self._boost_end_time - now).total_seconds())
+        fraction = rem_sec / total_sec if total_sec > 0 else 0.0
+        return round(self._boost_delta_f * fraction, 1)
+
+    @property
+    def current_boost(self) -> float:
+        """Current comfort boost offset in °F (alias for boost_current_offset)."""
+        return self.boost_current_offset
+
+    @property
     def native_target_temperature_low(self) -> float | None:
         if self._attr_hvac_mode in (HVACMode.HEAT_COOL, HVACMode.OFF):
-            return self._target_temp_low
+            if self._target_temp_low is None:
+                return None
+            return round(self._target_temp_low + self.boost_current_offset, 1)
         return None
 
     @property
     def native_target_temperature_high(self) -> float | None:
         if self._attr_hvac_mode in (HVACMode.HEAT_COOL, HVACMode.OFF):
-            return self._target_temp_high
+            if self._target_temp_high is None:
+                return None
+            return round(self._target_temp_high + self.boost_current_offset, 1)
         return None
 
     @property
     def native_target_temperature(self) -> float | None:
+        offset = self.boost_current_offset
         if self._attr_hvac_mode == HVACMode.HEAT:
-            return self._target_temp_low
+            return (
+                round(self._target_temp_low + offset, 1)
+                if self._target_temp_low is not None
+                else None
+            )
         if self._attr_hvac_mode == HVACMode.COOL:
-            return self._target_temp_high
+            return (
+                round(self._target_temp_high + offset, 1)
+                if self._target_temp_high is not None
+                else None
+            )
         return None
 
     @property
@@ -301,17 +448,46 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             "phase": phase,
             "in_recovery": in_recovery,
             "explanation": self._plan_explanation,
+            "current_boost": self.current_boost,
         }
 
+    @property
+    def extra_restore_state_data(self) -> ComfortBoostExtraStoredData | None:
+        """Return entity specific state data to be restored without polluting public attributes."""
+        if (
+            not self.boost_active
+            or not self._boost_start_time
+            or not self._boost_end_time
+        ):
+            return None
+        return ComfortBoostExtraStoredData(
+            start_time=self._boost_start_time.isoformat(),
+            end_time=self._boost_end_time.isoformat(),
+            delta_f=self._boost_delta_f,
+            duration_minutes=self._boost_duration_minutes,
+            decay=self._boost_decay,
+        )
+
     def get_comfort_bounds(self) -> tuple[float | None, float | None]:
-        """Returns (heat_to, cool_to) according to current mode and setpoints."""
+        """Returns (heat_to, cool_to) according to current mode, setpoints, and comfort boost."""
         if self._attr_hvac_mode == HVACMode.OFF:
             return None, None
+        offset = self.boost_current_offset
+        low = (
+            round(self._target_temp_low + offset, 1)
+            if self._target_temp_low is not None
+            else None
+        )
+        high = (
+            round(self._target_temp_high + offset, 1)
+            if self._target_temp_high is not None
+            else None
+        )
         if self._attr_hvac_mode == HVACMode.HEAT:
-            return self._target_temp_low, None
+            return low, None
         if self._attr_hvac_mode == HVACMode.COOL:
-            return None, self._target_temp_high
-        return self._target_temp_low, self._target_temp_high
+            return None, high
+        return low, high
 
     async def async_update_from_schedule(self) -> None:
         """Reads mode and setpoints from active schedule entity data."""
@@ -435,5 +611,47 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         """Handle manual HVAC mode change (switches to manual preset)."""
         self._attr_preset_mode = PRESET_MANUAL
         self._attr_hvac_mode = hvac_mode
+        self.async_write_ha_state()
+        await self._manager.async_evaluate()
+
+    async def async_comfort_boost(
+        self,
+        feeling: str,
+        delta_f: float = 2.0,
+        duration_minutes: int = 120,
+        decay: bool = True,
+    ) -> None:
+        """Apply temporary comfort boost with stacking up to ±5.0°F."""
+        sign = 1.0 if str(feeling).lower() == "too_cold" else -1.0
+        requested_delta = abs(float(delta_f)) * sign
+
+        # Option B: Add onto currently remaining offset (stacking)
+        current = self.boost_current_offset if self.boost_active else 0.0
+        new_total_delta = current + requested_delta
+
+        # Cap at ±5.0°F
+        clamped_delta = max(-5.0, min(5.0, round(new_total_delta, 1)))
+
+        if abs(clamped_delta) < 0.1:
+            await self.async_clear_comfort_boost()
+            return
+
+        now = dt_util.utcnow()
+        self._boost_start_time = now
+        self._boost_end_time = now + timedelta(minutes=duration_minutes)
+        self._boost_delta_f = clamped_delta
+        self._boost_duration_minutes = duration_minutes
+        self._boost_decay = decay
+
+        self.async_write_ha_state()
+        await self._manager.async_evaluate()
+
+    async def async_clear_comfort_boost(self) -> None:
+        """Clear any active comfort boost and restore baseline targets."""
+        if not self.boost_active and self._boost_end_time is None:
+            return
+        self._boost_start_time = None
+        self._boost_end_time = None
+        self._boost_delta_f = 0.0
         self.async_write_ha_state()
         await self._manager.async_evaluate()

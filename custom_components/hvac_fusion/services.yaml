@@ -46,3 +46,58 @@ release_schedule_lock:
       example: schedule.first_floor_occupied
       selector:
         text:
+
+comfort_boost:
+  name: Comfort Boost
+  description: Temporarily shifts a space's comfort setpoints with optional linear decay back to baseline.
+  target:
+    entity:
+      integration: hvac_fusion
+      domain: climate
+  fields:
+    feeling:
+      name: Feeling
+      description: Whether the space feels too cold or too hot.
+      required: true
+      default: too_cold
+      selector:
+        select:
+          options:
+            - label: Too Cold (Warmer)
+              value: too_cold
+            - label: Too Hot (Cooler)
+              value: too_hot
+    delta_f:
+      name: Delta (°F)
+      description: Setpoint shift magnitude in °F (stacks up to ±5.0°F).
+      default: 2.0
+      selector:
+        number:
+          min: 0.5
+          max: 5.0
+          step: 0.5
+          unit_of_measurement: "°F"
+    duration_minutes:
+      name: Duration (Minutes)
+      description: How long the comfort boost lasts before fully returning to baseline.
+      default: 120
+      selector:
+        number:
+          min: 15
+          max: 480
+          step: 15
+          unit_of_measurement: minutes
+    decay:
+      name: Linear Decay
+      description: If enabled, the temperature offset gradually decays back to baseline. If disabled, it holds constant for the duration.
+      default: true
+      selector:
+        boolean:
+
+clear_comfort_boost:
+  name: Clear Comfort Boost
+  description: Immediately clears any active comfort boost for the target space(s) and returns to baseline schedule.
+  target:
+    entity:
+      integration: hvac_fusion
+      domain: climate
