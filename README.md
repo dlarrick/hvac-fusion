@@ -1,6 +1,7 @@
 # HVAC Fusion
 
 [![CI](https://github.com/dlarrick/hvac-fusion/actions/workflows/test.yml/badge.svg)](https://github.com/dlarrick/hvac-fusion/actions/workflows/test.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/dlarrick/hvac-fusion)](https://github.com/dlarrick/hvac-fusion/releases)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/dlarrick/hvac-fusion)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
