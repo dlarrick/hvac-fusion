@@ -1802,7 +1802,7 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     this.activeEditingBlock = null;
     this.isSaving = false;
     this.isYamlSchedule = false;
-    this.isCompact = false;
+    this.isCompact = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(max-width: 768px)").matches || window.matchMedia("(pointer: coarse) and (max-width: 1024px)").matches : false;
     this.isEditMode = false;
     this.isForeign = false;
     this.dragAction = null;
@@ -1823,7 +1823,7 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     };
   }
   getCardSize() {
-    return 10;
+    return this.isCompact ? 5 : 10;
   }
   static async getConfigElement() {
     return document.createElement("schedule-preset-card-editor");
@@ -1838,11 +1838,16 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     };
   }
   connectedCallback() {
+    var _a2;
     super.connectedCallback();
     try {
       const savedCompact = localStorage.getItem("schedule-preset-card-compact");
       if (savedCompact !== null) {
         this.isCompact = savedCompact === "true";
+      } else if (((_a2 = this.config) == null ? void 0 : _a2.compact) !== void 0) {
+        this.isCompact = Boolean(this.config.compact);
+      } else if (typeof window !== "undefined" && window.matchMedia) {
+        this.isCompact = window.matchMedia("(max-width: 768px)").matches || window.matchMedia("(pointer: coarse) and (max-width: 1024px)").matches;
       }
     } catch {
     }
@@ -2799,6 +2804,25 @@ _SchedulePresetCard.styles = i$3`
       flex: 1;
       position: relative;
       cursor: crosshair;
+      touch-action: none;
+    }
+
+    .timeline-container:not(.editing) .day-track {
+      cursor: default;
+      touch-action: pan-y;
+    }
+
+    .timeline-container:not(.editing) .schedule-cell {
+      cursor: default;
+      touch-action: pan-y;
+    }
+
+    .timeline-container.editing .day-track {
+      touch-action: none;
+    }
+
+    .timeline-container.editing .schedule-cell {
+      cursor: pointer;
       touch-action: none;
     }
 

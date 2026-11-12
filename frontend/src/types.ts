@@ -66,6 +66,7 @@ export interface CardConfig {
   min_deadband?: number; // default 2°F / 1°C
   min_temp?: number;
   max_temp?: number;
+  compact?: boolean;
 }
 
 export interface StatusCardConfig extends CardConfig {

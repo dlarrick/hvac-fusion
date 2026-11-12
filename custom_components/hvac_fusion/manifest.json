@@ -2,13 +2,14 @@
   "domain": "hvac_fusion",
   "name": "HVAC Fusion",
   "documentation": "https://github.com/dlarrick/hvac-fusion",
+  "issue_tracker": "https://github.com/dlarrick/hvac-fusion/issues",
   "dependencies": [],
   "after_dependencies": [
     "frontend",
     "http"
   ],
   "requirements": [
-    "hvac-crossover==0.1.7"
+    "hvac-crossover==0.1.8"
   ],
   "codeowners": [
     "@dlarrick"

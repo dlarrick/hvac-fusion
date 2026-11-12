@@ -4,7 +4,7 @@ A suite of Home Assistant Lovelace custom cards for viewing and editing climate 
 
 Bundles two companion cards in a single unified bundle (`dist/hvac-fusion-cards.js`):
 1. **`custom:schedule-preset-card`**: 7-day interactive weekly schedule calendar editor.
-2. **`custom:climate-preset-timeline`**: 1-day horizontal timeline strip tracking active presets and space status.
+2. **`custom:hvac-fusion-status-card`**: Unified space status card with 24-hour preset schedule, temporary comfort bump, and room diagnostics (aliases legacy `custom:climate-preset-timeline`).
 
 ---
 
@@ -35,19 +35,19 @@ Bundles two companion cards in a single unified bundle (`dist/hvac-fusion-cards.
 * **Schedule Switcher**: Dynamically switch between any configured schedules without reconfiguring the card.
 * **Compact / Full View Toggle**: Switch between compact `280px` overview (4-hour time marks) and full `580px` view (2-hour marks).
 
-### 2. 1-Day Climate Preset Tracker (`custom:climate-preset-timeline`)
+### 2. Unified Space Status Card (`custom:hvac-fusion-status-card`)
 
-<img src="../docs/images/climate_preset_timeline.png" alt="Climate Card with Companion Preset Timeline" width="430">
+<img src="../docs/images/hvac_fusion_status_card.png" alt="HVAC Fusion Status Card with Companion Thermostat" width="430">
 
-* **Live "NOW" Needle**: An active needle indicates current time of day, updating every 30 seconds.
-* **Active Preset Tracking**: Reads the target space's climate entity (`climate.<space_id>_space`) and displays the active preset badge.
-* **Manual Hold Banner**: Displays `⏸️ Manual Hold Active — No schedule running` whenever the space is in manual mode (via manual setpoint adjustment or selecting the `manual` preset).
-* **Day Navigation**: Flip between days (`‹ Previous Day` / `Next Day ›`) to inspect upcoming routines.
-* **Inline Day Editing**: Click `[ ✎ Edit ]` to add, adjust, or split blocks directly on the daily track.
+* **24-Hour Preset Timeline**: Displays today's scheduled comfort bounds and active preset mode with a live high-contrast "NOW" progress needle updating every 30 seconds.
+* **Temporary Comfort Bump**: Provides one-tap `🔥 Warmer (+2°)` and `❄️ Cooler (-2°)` adjustments that stack up to ±5°F and decay linearly back to the active schedule over 2 hours without mutating underlying schedule definitions.
+* **Space Details & Diagnostics**: An expandable accordion displaying real-time system phase (e.g. *Plateau Maintenance*, *Setback Recovery*), active producer, window interlock state, cycling emitter status, and coordinator explanation strings.
+* **Day Navigation**: Flip between days (`‹ Today ›`) to inspect upcoming schedule routines.
+* **Backwards Compatibility**: Seamlessly aliases legacy `custom:climate-preset-timeline` card configurations.
 
 ### 3. Live Synchronization & Safety Locks
 * **Live Synchronization**: Real-time cross-card bus and background WebSocket polling ensure edits made anywhere—in another card, another browser tab, or via external automations and services—are reflected without needing a page refresh.
-* **Edit Mode Lock**: Clicking `[ ✎ Edit ]` invokes `hvac_fusion.acquire_schedule_lock` (setting `schedule_editing: true` on the climate entity) so automated supervisors know not to overwrite the schedule while a human is editing.
+* **Edit Mode Lock**: Clicking `[ ✎ Edit ]` in `schedule-preset-card` invokes `hvac_fusion.acquire_schedule_lock` (setting `schedule_editing: true` on the climate entity) so automated supervisors know not to overwrite the schedule while a human is editing.
 
 ---
 
@@ -64,15 +64,11 @@ step_size: 15              # Snapping interval in minutes (default: 15)
 min_deadband: 2            # Minimum degrees between heat and cool (default: 2)
 ```
 
-### 1-Day Climate Preset Timeline
+### Unified Space Status Card
 
 ```yaml
-type: custom:climate-preset-timeline
-title: "Living Room Timeline"
-entity: climate.living_room_space
-temperature_unit: "°F"     # Optional: "°F" or "°C" (default: "°F")
-step_size: 15              # Snapping interval in minutes (default: 15)
-min_deadband: 2            # Minimum degrees between heat and cool (default: 2)
+type: custom:hvac-fusion-status-card
+entity: climate.first_floor_space
 ```
 
 ---

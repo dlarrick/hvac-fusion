@@ -47,7 +47,11 @@ export class SchedulePresetCard extends LitElement {
   @state() private activeEditingBlock: InternalBlock | null = null;
   @state() private isSaving = false;
   @state() private isYamlSchedule = false;
-  @state() private isCompact = false;
+  @state() private isCompact =
+    typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(max-width: 768px)').matches ||
+        window.matchMedia('(pointer: coarse) and (max-width: 1024px)').matches
+      : false;
   @state() private isEditMode = false;
   @state() private isForeign = false;
 
@@ -298,6 +302,25 @@ export class SchedulePresetCard extends LitElement {
       flex: 1;
       position: relative;
       cursor: crosshair;
+      touch-action: none;
+    }
+
+    .timeline-container:not(.editing) .day-track {
+      cursor: default;
+      touch-action: pan-y;
+    }
+
+    .timeline-container:not(.editing) .schedule-cell {
+      cursor: default;
+      touch-action: pan-y;
+    }
+
+    .timeline-container.editing .day-track {
+      touch-action: none;
+    }
+
+    .timeline-container.editing .schedule-cell {
+      cursor: pointer;
       touch-action: none;
     }
 
@@ -576,7 +599,7 @@ export class SchedulePresetCard extends LitElement {
   }
 
   public getCardSize(): number {
-    return 10;
+    return this.isCompact ? 5 : 10;
   }
 
   public static async getConfigElement(): Promise<HTMLElement> {
@@ -599,6 +622,12 @@ export class SchedulePresetCard extends LitElement {
       const savedCompact = localStorage.getItem('schedule-preset-card-compact');
       if (savedCompact !== null) {
         this.isCompact = savedCompact === 'true';
+      } else if (this.config?.compact !== undefined) {
+        this.isCompact = Boolean(this.config.compact);
+      } else if (typeof window !== 'undefined' && window.matchMedia) {
+        this.isCompact =
+          window.matchMedia('(max-width: 768px)').matches ||
+          window.matchMedia('(pointer: coarse) and (max-width: 1024px)').matches;
       }
     } catch {
       // Ignore if localStorage unavailable
