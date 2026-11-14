@@ -623,6 +623,8 @@ async def test_options_flow_spaces_and_emitters(hass: HomeAssistant) -> None:
     assert len(spaces) == 1
     assert spaces[0][CONF_ID] == "living_room"
     assert spaces[0][CONF_NAME] == "Living Room"
+    assert spaces[0]["envelope_score"] == 5
+    assert spaces[0]["thermal_mass"] == 3
     assert len(spaces[0][CONF_EMITTERS]) == 1
     assert spaces[0][CONF_EMITTERS][0][CONF_ENTITY_ID] == "climate.lr_ac"
     assert spaces[0][CONF_EMITTERS][0][CONF_OFFSET] == 2.0

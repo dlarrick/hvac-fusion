@@ -23,6 +23,7 @@ from .const import (
     CONF_ELECTRIC_COST_PER_KWH,
     CONF_ELECTRIC_RATE_SENSOR,
     CONF_EMITTERS,
+    CONF_ENVELOPE_SCORE,
     CONF_EVALUATION_INTERVAL_MINUTES,
     CONF_FLOOR_AREA,
     CONF_FUEL_TYPE,
@@ -48,16 +49,80 @@ from .const import (
     CONF_SPACES,
     CONF_TARIFFS,
     CONF_TEMP_SENSOR,
+    CONF_THERMAL_MASS,
     CONF_TYPE,
     CONF_WINDOW_SENSOR,
     CONF_ZONE_ID,
     DEFAULT_CYCLING_BAND,
+    DEFAULT_ENVELOPE_SCORE,
     DEFAULT_EVALUATION_INTERVAL_MINUTES,
     DEFAULT_HEAT_PUMP_SAFETY_BAND_F,
+    DEFAULT_THERMAL_MASS,
     DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+ENVELOPE_SCORE_OPTIONS: list[selector.SelectOptionDict] = [
+    {
+        "value": "0",
+        "label": "0 — Uninsulated & very drafty (unfinished basement, uninsulated sunroom or garage)",
+    },
+    {
+        "value": "1",
+        "label": "1 — Very poor (mostly uninsulated, single-pane windows, obvious drafts)",
+    },
+    {
+        "value": "2",
+        "label": "2 — Minimal insulation (uninsulated walls, single-pane or storm windows)",
+    },
+    {
+        "value": "3",
+        "label": "3 — Below average (thin or uninsulated walls, some attic insulation, noticeable drafts)",
+    },
+    {
+        "value": "4",
+        "label": "4 — Modest insulation (insulated attic, older walls or windows, mild drafts)",
+    },
+    {
+        "value": "5",
+        "label": "5 — Average (typical home with decent attic/wall insulation and double-pane windows)",
+    },
+    {
+        "value": "6",
+        "label": "6 — Good (1990s-2000s standard, well-insulated walls/attic, tight windows and doors)",
+    },
+    {
+        "value": "7",
+        "label": "7 — Very good (updated air sealing, thick attic insulation, quality double-pane windows)",
+    },
+    {
+        "value": "8",
+        "label": "8 — High performance (modern tight build, deep insulation, triple-pane windows)",
+    },
+    {
+        "value": "9",
+        "label": "9 — Near Passive House (continuous exterior insulation, very airtight)",
+    },
+    {
+        "value": "10",
+        "label": "10 — Passive House / Net Zero (airtight, super-insulated, virtually no drafts)",
+    },
+]
+
+THERMAL_MASS_OPTIONS: list[selector.SelectOptionDict] = [
+    {
+        "value": "1",
+        "label": "1 — Very Low (drywall & carpet; heats up and cools down quickly)",
+    },
+    {"value": "2", "label": "2 — Low (drywall & wood or laminate floors)"},
+    {"value": "3", "label": "3 — Medium (typical mixed walls & flooring)"},
+    {"value": "4", "label": "4 — High (plaster walls, solid hardwood, or tile)"},
+    {
+        "value": "5",
+        "label": "5 — Very High (concrete/radiant slab, brick, or stone; slow to warm and slow to cool)",
+    },
+]
 
 
 _PROFILES_CACHE: list[dict[str, Any]] | None = None
@@ -1427,6 +1492,12 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         CONF_CEILING_HEIGHT: float(
                             user_input.get(CONF_CEILING_HEIGHT, 8.0)
                         ),
+                        CONF_ENVELOPE_SCORE: int(
+                            user_input.get(CONF_ENVELOPE_SCORE, DEFAULT_ENVELOPE_SCORE)
+                        ),
+                        CONF_THERMAL_MASS: int(
+                            user_input.get(CONF_THERMAL_MASS, DEFAULT_THERMAL_MASS)
+                        ),
                         CONF_PRIORITY: int(user_input.get(CONF_PRIORITY, 5)),
                         CONF_SHARED_BOILER_ROLE: user_input.get(
                             CONF_SHARED_BOILER_ROLE, "independent"
@@ -1461,6 +1532,22 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     max=30.0,
                     step=0.5,
                     mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(
+                CONF_ENVELOPE_SCORE, default=str(DEFAULT_ENVELOPE_SCORE)
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=ENVELOPE_SCORE_OPTIONS,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_THERMAL_MASS, default=str(DEFAULT_THERMAL_MASS)
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=THERMAL_MASS_OPTIONS,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
             vol.Optional(CONF_PRIORITY, default=5): selector.NumberSelector(
@@ -1657,6 +1744,12 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 space.pop(CONF_WINDOW_SENSOR, None)
             space[CONF_FLOOR_AREA] = float(user_input.get(CONF_FLOOR_AREA, 300.0))
             space[CONF_CEILING_HEIGHT] = float(user_input.get(CONF_CEILING_HEIGHT, 8.0))
+            space[CONF_ENVELOPE_SCORE] = int(
+                user_input.get(CONF_ENVELOPE_SCORE, DEFAULT_ENVELOPE_SCORE)
+            )
+            space[CONF_THERMAL_MASS] = int(
+                user_input.get(CONF_THERMAL_MASS, DEFAULT_THERMAL_MASS)
+            )
             space[CONF_PRIORITY] = int(user_input.get(CONF_PRIORITY, 5))
             space[CONF_SHARED_BOILER_ROLE] = user_input.get(
                 CONF_SHARED_BOILER_ROLE,
@@ -1691,6 +1784,24 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         max=30.0,
                         step=0.5,
                         mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_ENVELOPE_SCORE,
+                    default=str(space.get(CONF_ENVELOPE_SCORE, DEFAULT_ENVELOPE_SCORE)),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=ENVELOPE_SCORE_OPTIONS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_THERMAL_MASS,
+                    default=str(space.get(CONF_THERMAL_MASS, DEFAULT_THERMAL_MASS)),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=THERMAL_MASS_OPTIONS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Optional(

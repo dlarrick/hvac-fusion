@@ -3145,7 +3145,13 @@ const _HvacFusionStatusEditor = class _HvacFusionStatusEditor extends i {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: ["phase", "active_producer", "explanation", "window_open"],
+      diagnostic_attributes: [
+        "phase",
+        "active_producer",
+        "economic_crossover_temp",
+        "explanation",
+        "window_open"
+      ],
       ...config,
       type: "custom:hvac-fusion-status-card"
     };
@@ -3168,6 +3174,7 @@ const _HvacFusionStatusEditor = class _HvacFusionStatusEditor extends i {
     const current = this._config.diagnostic_attributes || [
       "phase",
       "active_producer",
+      "economic_crossover_temp",
       "explanation",
       "window_open"
     ];
@@ -3186,6 +3193,7 @@ const _HvacFusionStatusEditor = class _HvacFusionStatusEditor extends i {
     const selectedAttrs = this._config.diagnostic_attributes || [
       "phase",
       "active_producer",
+      "economic_crossover_temp",
       "explanation",
       "window_open"
     ];
@@ -3289,6 +3297,18 @@ const _HvacFusionStatusEditor = class _HvacFusionStatusEditor extends i {
     )}
                     />
                     <span>Active Producer (e.g. Heat Pump, Boiler)</span>
+                  </label>
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes("economic_crossover_temp")}
+                      @change=${(e2) => this._toggleDiagnosticAttribute(
+      "economic_crossover_temp",
+      e2.target.checked
+    )}
+                    />
+                    <span>Economic Crossover Temp (Per-space HP/boiler break-even)</span>
                   </label>
 
                   <label class="checkbox-item">
@@ -3524,7 +3544,13 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: ["phase", "active_producer", "explanation", "window_open"]
+      diagnostic_attributes: [
+        "phase",
+        "active_producer",
+        "economic_crossover_temp",
+        "explanation",
+        "window_open"
+      ]
     };
   }
   connectedCallback() {
@@ -3550,7 +3576,13 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: ["phase", "active_producer", "explanation", "window_open"],
+      diagnostic_attributes: [
+        "phase",
+        "active_producer",
+        "economic_crossover_temp",
+        "explanation",
+        "window_open"
+      ],
       ...config
     };
     if (this.config.diagnostics_expanded_by_default) {
@@ -3822,6 +3854,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
     const list = this.config.diagnostic_attributes || [
       "phase",
       "active_producer",
+      "economic_crossover_temp",
       "explanation",
       "window_open"
     ];
@@ -3845,6 +3878,16 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
         <div class="diag-card">
           <div class="diag-label">Active Producer</div>
           <div class="diag-value" title="${prod}">${prod}</div>
+        </div>
+      `);
+    }
+    if (this.shouldShowAttribute("economic_crossover_temp")) {
+      const xover = attrs.economic_crossover_temp;
+      const label = typeof xover === "number" && !Number.isNaN(xover) ? `${xover.toFixed(1)} °F` : "N/A";
+      cards.push(b`
+        <div class="diag-card">
+          <div class="diag-label">Economic Crossover</div>
+          <div class="diag-value" title="${label}">${label}</div>
         </div>
       `);
     }

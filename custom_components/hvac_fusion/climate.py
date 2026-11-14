@@ -464,6 +464,13 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         if self.active_schedule_entity:
             is_editing = self._manager.is_schedule_locked(self.active_schedule_entity)
 
+        space_xover = None
+        last_plan = getattr(self._manager, "last_plan", None)
+        if last_plan and getattr(last_plan, "diagnostics", None):
+            xovers = getattr(last_plan.diagnostics, "space_crossover_temps", None)
+            if isinstance(xovers, dict):
+                space_xover = xovers.get(self._space_id)
+
         return {
             "space_id": self._space_id,
             "preset_mode": self._attr_preset_mode,
@@ -473,6 +480,7 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             "active_delivery_units": self._active_delivery_units,
             "cycling_emitters": cycling_emitters,
             "active_producer": self._active_producer,
+            "economic_crossover_temp": space_xover,
             "window_open": window_open,
             "phase": phase,
             "in_recovery": in_recovery,
