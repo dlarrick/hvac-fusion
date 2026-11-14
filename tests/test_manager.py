@@ -441,3 +441,57 @@ def test_space_climate_hvac_action_deadband_buffer_fallback():
     # At 76.5°F (<= 77.0 - 0.5): satisfied inside deadband -> IDLE
     manager.get_space_current_temp.return_value = 76.5
     assert entity.hvac_action == HVACAction.IDLE
+
+
+def test_space_climate_economic_crossover_temp_attribute():
+    """Verify HvacFusionSpaceClimate exposes per-space economic_crossover_temp from diagnostics."""
+    hass = MagicMock(spec=HomeAssistant)
+    manager = MagicMock(spec=HvacFusionManager)
+    manager.hass = hass
+    manager.coordinator = None
+    manager.get_space_current_temp.return_value = 68.0
+    manager.get_space_window_open.return_value = False
+    manager.is_schedule_locked.return_value = False
+
+    plan = MagicMock()
+    plan.diagnostics = MagicMock()
+    plan.diagnostics.space_crossover_temps = {"living_room": 32.3}
+    manager.last_plan = plan
+
+    space_conf = {CONF_ID: "living_room", CONF_NAME: "Living Room"}
+    entity = HvacFusionSpaceClimate(manager, space_conf)
+    assert entity.extra_state_attributes["economic_crossover_temp"] == 32.3
+
+    # Space without dual-fuel crossover returns None
+    other_entity = HvacFusionSpaceClimate(
+        manager, {CONF_ID: "guest_room", CONF_NAME: "Guest Room"}
+    )
+    assert other_entity.extra_state_attributes["economic_crossover_temp"] is None
+
+
+def test_build_topology_envelope_score_and_thermal_mass():
+    """Verify _build_topology propagates envelope_score and thermal_mass into Space."""
+    hass = MagicMock(spec=HomeAssistant)
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {},
+        CONF_PRODUCERS: {},
+        CONF_SPACES: [
+            {
+                CONF_ID: "passive_room",
+                CONF_NAME: "Passive Room",
+                "floor_area_sqft": 100.0,
+                "ceiling_height_ft": 10.0,
+                "envelope_score": 10,
+                "thermal_mass": 5,
+                CONF_EMITTERS: [],
+            },
+        ],
+    }
+    manager = HvacFusionManager(hass, conf)
+    topology = manager._build_topology()
+    space = topology.spaces[0]
+    assert space.envelope_score == 10.0
+    assert space.thermal_mass == 5
+    assert abs(space.ua_factor - 15.0) < 0.01
+    assert abs(space.thermal_capacitance_btu_per_f - (1000.0 * 0.018 * 24.0)) < 0.01

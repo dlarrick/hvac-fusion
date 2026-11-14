@@ -57,6 +57,7 @@ from .const import (
     CONF_ELECTRIC_COST_PER_KWH,
     CONF_ELECTRIC_RATE_SENSOR,
     CONF_EMITTERS,
+    CONF_ENVELOPE_SCORE,
     CONF_EVALUATION_INTERVAL_MINUTES,
     CONF_FLOOR_AREA,
     CONF_FUEL_TYPE,
@@ -84,13 +85,16 @@ from .const import (
     CONF_SPACES,
     CONF_TARIFFS,
     CONF_TEMP_SENSOR,
+    CONF_THERMAL_MASS,
     CONF_TYPE,
     CONF_WINDOW_SENSOR,
     CONF_ZONE_ID,
     DEFAULT_COOL_TO,
     DEFAULT_CYCLING_BAND,
+    DEFAULT_ENVELOPE_SCORE,
     DEFAULT_EVALUATION_INTERVAL_MINUTES,
     DEFAULT_HEAT_TO,
+    DEFAULT_THERMAL_MASS,
     DOMAIN,
 )
 
@@ -432,6 +436,12 @@ class HvacFusionManager:
             return None
         if fuel_type != FuelType.PROPANE and self.tariffs.gas_cost_per_therm <= 0:
             return None
+        if (
+            self.last_plan
+            and self.last_plan.diagnostics
+            and self.last_plan.diagnostics.economic_crossover_temp is not None
+        ):
+            return round(self.last_plan.diagnostics.economic_crossover_temp, 1)
         try:
             temp = self.coordinator.economics.compute_crossover_temperature(
                 tariffs=self.tariffs,
@@ -594,11 +604,15 @@ class HvacFusionManager:
                         )
                     )
 
+            raw_env = s_conf.get(CONF_ENVELOPE_SCORE, DEFAULT_ENVELOPE_SCORE)
+            raw_mass = s_conf.get(CONF_THERMAL_MASS, DEFAULT_THERMAL_MASS)
             space = Space(
                 id=s_id,
                 name=s_conf[CONF_NAME],
                 floor_area_sqft=float(s_conf.get(CONF_FLOOR_AREA, 300.0)),
                 ceiling_height_ft=float(s_conf.get(CONF_CEILING_HEIGHT, 9.0)),
+                envelope_score=float(raw_env),
+                thermal_mass=int(raw_mass),
                 priority=int(s_conf.get(CONF_PRIORITY, 5)),
                 shared_boiler_role=role_map.get(
                     s_conf.get(CONF_SHARED_BOILER_ROLE, "independent"),

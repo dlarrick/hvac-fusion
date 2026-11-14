@@ -103,7 +103,13 @@ export class HvacFusionStatusEditor extends LitElement {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: ['phase', 'active_producer', 'explanation', 'window_open'],
+      diagnostic_attributes: [
+        'phase',
+        'active_producer',
+        'economic_crossover_temp',
+        'explanation',
+        'window_open',
+      ],
       ...config,
       type: 'custom:hvac-fusion-status-card'
     };
@@ -129,6 +135,7 @@ export class HvacFusionStatusEditor extends LitElement {
     const current = this._config.diagnostic_attributes || [
       'phase',
       'active_producer',
+      'economic_crossover_temp',
       'explanation',
       'window_open'
     ];
@@ -152,6 +159,7 @@ export class HvacFusionStatusEditor extends LitElement {
     const selectedAttrs = this._config.diagnostic_attributes || [
       'phase',
       'active_producer',
+      'economic_crossover_temp',
       'explanation',
       'window_open'
     ];
@@ -263,6 +271,19 @@ export class HvacFusionStatusEditor extends LitElement {
                         )}
                     />
                     <span>Active Producer (e.g. Heat Pump, Boiler)</span>
+                  </label>
+
+                  <label class="checkbox-item">
+                    <input
+                      type="checkbox"
+                      ?checked=${selectedAttrs.includes('economic_crossover_temp')}
+                      @change=${(e: Event) =>
+                        this._toggleDiagnosticAttribute(
+                          'economic_crossover_temp',
+                          (e.target as HTMLInputElement).checked
+                        )}
+                    />
+                    <span>Economic Crossover Temp (Per-space HP/boiler break-even)</span>
                   </label>
 
                   <label class="checkbox-item">

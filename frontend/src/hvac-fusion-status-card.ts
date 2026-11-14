@@ -67,7 +67,13 @@ export class HvacFusionStatusCard extends LitElement {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: ['phase', 'active_producer', 'explanation', 'window_open']
+      diagnostic_attributes: [
+        'phase',
+        'active_producer',
+        'economic_crossover_temp',
+        'explanation',
+        'window_open',
+      ],
     };
   }
 
@@ -99,7 +105,13 @@ export class HvacFusionStatusCard extends LitElement {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: ['phase', 'active_producer', 'explanation', 'window_open'],
+      diagnostic_attributes: [
+        'phase',
+        'active_producer',
+        'economic_crossover_temp',
+        'explanation',
+        'window_open',
+      ],
       ...config
     };
     if (this.config.diagnostics_expanded_by_default) {
@@ -819,6 +831,7 @@ export class HvacFusionStatusCard extends LitElement {
     const list = this.config.diagnostic_attributes || [
       'phase',
       'active_producer',
+      'economic_crossover_temp',
       'explanation',
       'window_open'
     ];
@@ -845,6 +858,20 @@ export class HvacFusionStatusCard extends LitElement {
         <div class="diag-card">
           <div class="diag-label">Active Producer</div>
           <div class="diag-value" title="${prod}">${prod}</div>
+        </div>
+      `);
+    }
+
+    if (this.shouldShowAttribute('economic_crossover_temp')) {
+      const xover = attrs.economic_crossover_temp;
+      const label =
+        typeof xover === 'number' && !Number.isNaN(xover)
+          ? `${xover.toFixed(1)} °F`
+          : 'N/A';
+      cards.push(html`
+        <div class="diag-card">
+          <div class="diag-label">Economic Crossover</div>
+          <div class="diag-value" title="${label}">${label}</div>
         </div>
       `);
     }
