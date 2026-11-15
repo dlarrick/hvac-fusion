@@ -688,3 +688,63 @@ async def test_advisory_only_dry_run_all_sensors_populated(hass: HomeAssistant) 
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_controllable_emitter_sets_advisory_only_false(
+    hass: HomeAssistant,
+) -> None:
+    """Test crossover sensor reports advisory_only=False when an emitter has an entity_id."""
+    hass.states.async_set("sensor.outdoor_temp", "32.0")
+    hass.states.async_set("sensor.living_room_temp", "68.0")
+    hass.states.async_set(
+        "climate.lr_mini_split", "heat", {"current_temperature": 68.0}
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Autonomous Coordinator",
+        data={
+            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+            CONF_TARIFFS: {
+                CONF_ELECTRIC_COST_PER_KWH: 0.25,
+                CONF_GAS_COST_PER_THERM: 1.88,
+            },
+            CONF_PRODUCERS: {
+                "hp": {
+                    CONF_NAME: "Heat Pump",
+                    CONF_TYPE: "heat_pump",
+                    CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+                },
+            },
+            CONF_SPACES: [
+                {
+                    CONF_ID: "living_room",
+                    CONF_NAME: "Living Room",
+                    CONF_TEMP_SENSOR: "sensor.living_room_temp",
+                    CONF_EMITTERS: [
+                        {
+                            CONF_ID: "lr_hp",
+                            CONF_NAME: "LR Mini Split",
+                            CONF_TYPE: "mini_split",
+                            CONF_PRODUCER: "hp",
+                            "entity_id": "climate.lr_mini_split",
+                            CONF_NOMINAL_BTU: 18000,
+                        },
+                    ],
+                }
+            ],
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    xover_state = hass.states.get("sensor.hvac_fusion_economic_crossover_temperature")
+    assert xover_state is not None
+    assert xover_state.attributes["advisory_only"] is False
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
