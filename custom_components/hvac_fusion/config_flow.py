@@ -60,6 +60,7 @@ from .const import (
     DEFAULT_THERMAL_MASS,
     DOMAIN,
 )
+from .profile_store import async_fetch_remote_index, normalize_profile_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -166,15 +167,16 @@ def _scan_profiles_sync() -> list[dict[str, Any]]:
                             fuel = data.get("fuel_type")
                             turndown = data.get("turndown_ratio")
 
-                            parts = []
-                            if make:
-                                parts.append(make)
-                            if model:
-                                parts.append(model)
-                            elif series:
-                                parts.append(series)
-
-                            label = " ".join(parts) if parts else rel_path
+                            detail = model or series
+                            if make and detail:
+                                if detail.lower().startswith(make.lower()):
+                                    label = detail
+                                else:
+                                    label = f"{make} {detail}"
+                            elif make or detail:
+                                label = make or detail
+                            else:
+                                label = rel_path
                             extra_info = []
                             if fuel:
                                 extra_info.append(fuel.replace("_", " ").title())
@@ -210,74 +212,49 @@ def _scan_profiles_sync() -> list[dict[str, Any]]:
     return profiles
 
 
+_CATEGORY_MATCHERS: dict[str, tuple[str, ...]] = {
+    "heat_pump": ("heat_pump",),
+    "modulating_boiler": ("modulating_boiler", "boiler"),
+    "atmospheric_boiler": ("atmospheric_boiler",),
+    "steam_boiler": ("steam_boiler", "atmospheric_boiler"),
+    "furnace": ("furnace",),
+    "boiler": ("boiler", "modulating_boiler", "atmospheric_boiler", "steam_boiler"),
+}
+
+
 def _filter_profiles(
     raw_profiles: list[dict[str, Any]], category: str | None = None
 ) -> list[dict[str, str]]:
-    """Filter scanned profiles by category and append tailored custom/none option."""
-    if category == "heat_pump":
-        res = [
-            {"value": p["value"], "label": p["label"]}
-            for p in raw_profiles
-            if p.get("category") == "heat_pump"
-        ]
-        res.append({"value": "none", "label": "None / Custom Heat Pump"})
-        return res
-    if category == "modulating_boiler":
-        res = [
-            {"value": p["value"], "label": p["label"]}
-            for p in raw_profiles
-            if p.get("category") in ("modulating_boiler", "boiler")
-        ]
-        res.append({"value": "none", "label": "None / Custom Mod-Con Boiler"})
-        return res
-    if category == "atmospheric_boiler":
-        res = [
-            {"value": p["value"], "label": p["label"]}
-            for p in raw_profiles
-            if p.get("category") == "atmospheric_boiler"
-        ]
-        res.append({"value": "none", "label": "None / Custom Atmospheric Boiler"})
-        return res
-    if category == "steam_boiler":
-        res = [
-            {"value": p["value"], "label": p["label"]}
-            for p in raw_profiles
-            if p.get("category") in ("steam_boiler", "atmospheric_boiler")
-        ]
-        res.append({"value": "none", "label": "None / Custom Steam Boiler"})
-        return res
-    if category == "furnace":
-        res = [
-            {"value": p["value"], "label": p["label"]}
-            for p in raw_profiles
-            if p.get("category") == "furnace"
-        ]
-        res.append({"value": "none", "label": "None / Custom Warm-Air Furnace"})
-        return res
-    if category == "boiler":
-        res = [
-            {"value": p["value"], "label": p["label"]}
-            for p in raw_profiles
-            if p.get("category")
-            in ("boiler", "modulating_boiler", "atmospheric_boiler", "steam_boiler")
-        ]
-        res.append({"value": "none", "label": "None / Custom Boiler"})
-        return res
-
-    res = [{"value": p["value"], "label": p["label"]} for p in raw_profiles]
-    res.append({"value": "none", "label": "None / Custom Equipment"})
-    return res
+    """Filter scanned profiles by category."""
+    allowed = _CATEGORY_MATCHERS.get(category) if category else None
+    return [
+        {"value": p["value"], "label": p["label"]}
+        for p in raw_profiles
+        if allowed is None or p.get("category") in allowed
+    ]
 
 
 async def async_get_available_producer_profiles(
     hass: HomeAssistant,
     category: str | None = None,
 ) -> list[dict[str, str]]:
-    """Asynchronously return available producer profile choices without blocking."""
+    """Asynchronously return bundled generic + remote producer profile choices."""
     global _PROFILES_CACHE
     if _PROFILES_CACHE is None:
         _PROFILES_CACHE = await hass.async_add_executor_job(_scan_profiles_sync)
-    return _filter_profiles(_PROFILES_CACHE, category)
+
+    remote_profiles = await async_fetch_remote_index(hass)
+    if not remote_profiles:
+        return _filter_profiles(_PROFILES_CACHE, category)
+
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for p in [*_PROFILES_CACHE, *remote_profiles]:
+        norm_id = normalize_profile_id(str(p.get("value", "")))
+        if norm_id and norm_id not in seen:
+            seen.add(norm_id)
+            merged.append(p)
+    return _filter_profiles(merged, category)
 
 
 def get_available_producer_profiles(

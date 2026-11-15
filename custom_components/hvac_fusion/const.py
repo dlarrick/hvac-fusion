@@ -64,3 +64,7 @@ PRESET_MANUAL = "manual"
 
 DEFAULT_HEAT_TO = 68.0
 DEFAULT_COOL_TO = 74.0
+
+CONF_PROFILES_BASE_URL = "profiles_base_url"
+DEFAULT_PROFILES_BASE_URL = "https://dlarrick.github.io/hvac-profiles/v1/"
+PROFILE_REVALIDATE_INTERVAL_SECONDS = 3600

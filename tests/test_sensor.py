@@ -80,7 +80,7 @@ async def test_sensors_with_gas_boiler_and_heat_pump(hass: HomeAssistant) -> Non
             },
             "hp": {
                 CONF_TYPE: "inverter_heat_pump",
-                CONF_PROFILE: "mitsubishi/mxz_xcxxnahz2",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
             },
         },
     }
@@ -133,7 +133,7 @@ async def test_sensors_with_propane_boiler(hass: HomeAssistant) -> None:
             },
             "hp": {
                 CONF_TYPE: "inverter_heat_pump",
-                CONF_PROFILE: "mitsubishi/mxz_xcxxnahz2",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
             },
         },
     }
@@ -328,7 +328,7 @@ async def test_producer_sensor_active_delivery_units_no_cross_contamination(
         CONF_PRODUCERS: {
             "hp1": {
                 CONF_TYPE: "inverter_heat_pump",
-                CONF_PROFILE: "mitsubishi/mxz_xcxxnahz2",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
             },
             "hp2": {
                 CONF_TYPE: "inverter_heat_pump",

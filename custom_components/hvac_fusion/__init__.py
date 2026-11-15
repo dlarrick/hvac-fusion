@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -78,6 +77,7 @@ from .const import (
     CONF_PRODUCER,
     CONF_PRODUCERS,
     CONF_PROFILE,
+    CONF_PROFILES_BASE_URL,
     CONF_PROPANE_COST_PER_GAL,
     CONF_PROPANE_RATE_SENSOR,
     CONF_RATED_AFUE,
@@ -95,9 +95,12 @@ from .const import (
     DEFAULT_ENVELOPE_SCORE,
     DEFAULT_EVALUATION_INTERVAL_MINUTES,
     DEFAULT_HEAT_TO,
+    DEFAULT_PROFILES_BASE_URL,
     DEFAULT_THERMAL_MASS,
     DOMAIN,
+    PROFILE_REVALIDATE_INTERVAL_SECONDS,
 )
+from .profile_store import async_ensure_profiles, resolve_profile_path
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -191,30 +194,9 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
-def _resolve_profile_path(profile_str: str) -> str:
-    """Finds profile JSON in installed hvac_crossover library or user path."""
-    if os.path.isabs(profile_str) and os.path.exists(profile_str):
-        return profile_str
-
-    try:
-        import hvac_crossover
-
-        pkg_dir = os.path.dirname(hvac_crossover.__file__)
-        pkg_profiles_dir = os.path.join(pkg_dir, "profiles", "producers")
-        candidate = os.path.join(pkg_profiles_dir, profile_str)
-        if not candidate.endswith(".json"):
-            candidate += ".json"
-        if os.path.exists(candidate):
-            return candidate
-    except ImportError:
-        pass
-
-    if os.path.exists(profile_str):
-        return profile_str
-    if os.path.exists(profile_str + ".json"):
-        return profile_str + ".json"
-
-    return profile_str
+def _resolve_profile_path(profile_str: str, hass: HomeAssistant | None = None) -> str:
+    """Finds profile JSON in installed hvac_crossover, local cache, or user path."""
+    return resolve_profile_path(profile_str, hass)
 
 
 class HvacFusionManager:
@@ -269,6 +251,7 @@ class HvacFusionManager:
         self.cumulative_savings_vs_fossil_fuel: float = 0.0
         self.cumulative_savings_vs_heat_pump: float = 0.0
         self._last_cost_eval_utc: datetime | None = None
+        self._last_profile_check: datetime | None = None
 
     @property
     def spaces_config(self) -> list[dict[str, Any]]:
@@ -477,8 +460,38 @@ class HvacFusionManager:
             return phase.value if hasattr(phase, "value") else str(phase)
         return None
 
+    def _get_configured_profile_names(self) -> list[str]:
+        """Return all configured non-empty producer profile identifiers."""
+        return [
+            str(p_conf[CONF_PROFILE])
+            for p_conf in self.conf.get(CONF_PRODUCERS, {}).values()
+            if p_conf.get(CONF_PROFILE)
+        ]
+
+    async def _async_refresh_profiles(self, force: bool = False) -> bool:
+        """Ensure configured remote profiles are downloaded and periodically revalidated."""
+        now_utc = datetime.now(UTC)
+        if (
+            not force
+            and self._last_profile_check is not None
+            and (now_utc - self._last_profile_check).total_seconds()
+            < PROFILE_REVALIDATE_INTERVAL_SECONDS
+        ):
+            return False
+
+        base_url = str(self.conf.get(CONF_PROFILES_BASE_URL, DEFAULT_PROFILES_BASE_URL))
+        changed = await async_ensure_profiles(
+            self.hass,
+            self._get_configured_profile_names(),
+            base_url=base_url,
+            revalidate=True,
+        )
+        self._last_profile_check = now_utc
+        return changed
+
     async def async_init(self) -> None:
         """Asynchronously load topology profiles and build coordinator."""
+        await self._async_refresh_profiles(force=True)
         self.topology = await self.hass.async_add_executor_job(self._build_topology)
         self.tariffs = self.get_current_tariffs()
         self.coordinator = DualFuelCoordinator(self.topology, CoordinatorConfig())
@@ -498,7 +511,7 @@ class HvacFusionManager:
                 fuel = FuelType.NATURAL_GAS
 
             if profile_name:
-                resolved_path = _resolve_profile_path(profile_name)
+                resolved_path = _resolve_profile_path(profile_name, self.hass)
                 nominal_val = p_conf.get(CONF_NOMINAL_BTU)
                 prod = ProducerProfileFactory.load_from_json(
                     file_path=resolved_path,
@@ -926,6 +939,10 @@ class HvacFusionManager:
 
     async def async_evaluate(self, now: Any | None = None) -> None:
         """Runs the coordination cycle and dispatches commands to physical thermostats."""
+        if await self._async_refresh_profiles(force=False):
+            self.topology = await self.hass.async_add_executor_job(self._build_topology)
+            self.coordinator = DualFuelCoordinator(self.topology, CoordinatorConfig())
+
         outdoor_temp = self.get_outdoor_temp()
         self.tariffs = self.get_current_tariffs()
 

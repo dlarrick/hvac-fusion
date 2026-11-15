@@ -119,7 +119,7 @@ Even if your HVAC system is not integrated with Home Assistant, there's still va
 Configure the following:
 
 - Outside temperature sensor. This sensor can be (and often is) from a weather forecast entity.
-- Producers. Your boiler(s), heat pump(s), and (soon) furnaces. Use a generic model, or look up & contribute a profile for your actual model.
+- Producers. Your boiler(s), heat pump(s), and (soon) furnaces. Use a generic model, or look up & contribute a profile for your actual model in [`hvac-profiles`](https://github.com/dlarrick/hvac-profiles).
 - Fuel tariffs. The price per unit for each of your fuel sources. This can be a fixed number, a sensor, or an input number.
 
 With this configuration HVAC Fusion provides advisory and equipment entities:
@@ -154,7 +154,7 @@ For complete field descriptions and setup details, see the [Configuration Refere
 2. Manage Producers:
    - Boilers (natural gas, propane, or fuel oil, with manufacturer or generic profiles)
    - Heat pump outdoor units (with manufacturer or generic profiles)
-   - *(Don't see your exact model? Use a generic profile for now—contributions of new equipment profiles to [`hvac-crossover`](https://github.com/dlarrick/hvac-crossover) via GitHub issues or PRs are very welcome!)*
+   - *(Don't see your exact model? Use a generic profile for now—contributions of new equipment profiles to [`hvac-profiles`](https://github.com/dlarrick/hvac-profiles) via PR (see its [CONTRIBUTING guide](https://github.com/dlarrick/hvac-profiles/blob/main/CONTRIBUTING.md)) are very welcome!)*
 3. Manage Spaces:
    - Define spaces (rooms or zones), temperature sensors, and room dimensions
    - Arbitration priority (resolves heat/cool mode conflicts across multi-split heads sharing an outdoor unit)
@@ -253,6 +253,8 @@ A dedicated status sensor is created for each piece of heating or cooling equipm
 ## Acknowledgments & Attribution
 
 The visual presentation, dual-setpoint interaction, and weekly calendar layout in `schedule-preset-card` are adapted from and inspired by the excellent work of **[arozoire](https://github.com/arozoire)** in [`schedule_creator`](https://github.com/arozoire/schedule_creator) and `weekly-schedule-card` (MIT Licensed), re-engineered here to operate natively with Home Assistant's built-in `schedule.*` helper entities and Core WebSocket APIs.
+
+Manufacturer equipment performance profiles are fetched at runtime from **[hvac-profiles](https://github.com/dlarrick/hvac-profiles)**, licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
 ## License
 
