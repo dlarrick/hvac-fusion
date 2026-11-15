@@ -3,6 +3,7 @@ import { property, state } from 'lit/decorators.js';
 import {
   DAYS_OF_WEEK,
   DAY_LABELS,
+  DEFAULT_STATUS_DIAGNOSTICS,
   HAScheduleItem,
   HomeAssistant,
   InternalBlock,
@@ -67,13 +68,7 @@ export class HvacFusionStatusCard extends LitElement {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: [
-        'phase',
-        'active_producer',
-        'economic_crossover_temp',
-        'explanation',
-        'window_open',
-      ],
+      diagnostic_attributes: [...DEFAULT_STATUS_DIAGNOSTICS],
     };
   }
 
@@ -105,13 +100,7 @@ export class HvacFusionStatusCard extends LitElement {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: [
-        'phase',
-        'active_producer',
-        'economic_crossover_temp',
-        'explanation',
-        'window_open',
-      ],
+      diagnostic_attributes: [...DEFAULT_STATUS_DIAGNOSTICS],
       ...config
     };
     if (this.config.diagnostics_expanded_by_default) {
@@ -829,13 +818,7 @@ export class HvacFusionStatusCard extends LitElement {
   }
 
   private shouldShowAttribute(attrKey: string): boolean {
-    const list = this.config.diagnostic_attributes || [
-      'phase',
-      'active_producer',
-      'economic_crossover_temp',
-      'explanation',
-      'window_open'
-    ];
+    const list = this.config.diagnostic_attributes || DEFAULT_STATUS_DIAGNOSTICS;
     return list.includes(attrKey);
   }
 

@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { property, state } from 'lit/decorators.js';
-import { HomeAssistant, StatusCardConfig } from '../types';
+import { DEFAULT_STATUS_DIAGNOSTICS, HomeAssistant, StatusCardConfig } from '../types';
 
 export class HvacFusionStatusEditor extends LitElement {
   @property({ attribute: false }) public hass?: HomeAssistant;
@@ -103,13 +103,7 @@ export class HvacFusionStatusEditor extends LitElement {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: [
-        'phase',
-        'active_producer',
-        'economic_crossover_temp',
-        'explanation',
-        'window_open',
-      ],
+      diagnostic_attributes: [...DEFAULT_STATUS_DIAGNOSTICS],
       ...config,
       type: 'custom:hvac-fusion-status-card'
     };
@@ -132,16 +126,10 @@ export class HvacFusionStatusEditor extends LitElement {
   }
 
   private _toggleDiagnosticAttribute(attrKey: string, checked: boolean) {
-    const current = this._config.diagnostic_attributes || [
-      'phase',
-      'active_producer',
-      'economic_crossover_temp',
-      'explanation',
-      'window_open'
-    ];
+    const current = this._config.diagnostic_attributes || DEFAULT_STATUS_DIAGNOSTICS;
     let next: string[];
     if (checked) {
-      next = current.includes(attrKey) ? current : [...current, attrKey];
+      next = current.includes(attrKey) ? [...current] : [...current, attrKey];
     } else {
       next = current.filter((k) => k !== attrKey);
     }
@@ -156,13 +144,7 @@ export class HvacFusionStatusEditor extends LitElement {
       .filter((entityId) => entityId.startsWith('climate.'))
       .sort();
 
-    const selectedAttrs = this._config.diagnostic_attributes || [
-      'phase',
-      'active_producer',
-      'economic_crossover_temp',
-      'explanation',
-      'window_open'
-    ];
+    const selectedAttrs = this._config.diagnostic_attributes || DEFAULT_STATUS_DIAGNOSTICS;
 
     return html`
       <div class="editor-container">

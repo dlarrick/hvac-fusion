@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { HomeAssistant, SystemCardConfig } from '../types';
+import { DEFAULT_SYSTEM_DIAGNOSTICS, HomeAssistant, SystemCardConfig } from '../types';
 
 const AVAILABLE_SYSTEM_DIAGNOSTICS = [
   { key: 'system_phase', label: 'System Phase' },
@@ -40,14 +40,7 @@ export class HvacFusionSystemEditor extends LitElement {
   }
 
   private toggleDiagnosticAttr(key: string, checked: boolean) {
-    const current =
-      this.config.diagnostic_attributes || [
-        'system_phase',
-        'break_even_cop',
-        'control_enabled',
-        'heat_pump',
-        'auxiliary_producer'
-      ];
+    const current = this.config.diagnostic_attributes || DEFAULT_SYSTEM_DIAGNOSTICS;
     const next = checked
       ? Array.from(new Set([...current, key]))
       : current.filter((k) => k !== key);
@@ -130,14 +123,7 @@ export class HvacFusionSystemEditor extends LitElement {
     const allSensors = this.getSensorEntities();
     const xoverSensors = this.getSensorEntities('economic_crossover_temperature');
     const primarySensors = xoverSensors.length > 0 ? xoverSensors : allSensors;
-    const selectedAttrs =
-      this.config.diagnostic_attributes || [
-        'system_phase',
-        'break_even_cop',
-        'control_enabled',
-        'heat_pump',
-        'auxiliary_producer'
-      ];
+    const selectedAttrs = this.config.diagnostic_attributes || DEFAULT_SYSTEM_DIAGNOSTICS;
 
     return html`
       <div class="editor-container">

@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { HomeAssistant, SystemCardConfig } from './types';
+import { DEFAULT_SYSTEM_DIAGNOSTICS, HomeAssistant, SystemCardConfig } from './types';
 import './components/system-editor';
 
 @customElement('hvac-fusion-system-card')
@@ -22,13 +22,7 @@ export class HvacFusionSystemCard extends LitElement {
       show_producers: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: [
-        'system_phase',
-        'break_even_cop',
-        'control_enabled',
-        'heat_pump',
-        'auxiliary_producer'
-      ]
+      diagnostic_attributes: [...DEFAULT_SYSTEM_DIAGNOSTICS]
     };
   }
 
@@ -149,13 +143,7 @@ export class HvacFusionSystemCard extends LitElement {
   }
 
   private shouldShowAttribute(attrKey: string): boolean {
-    const list = this.config.diagnostic_attributes || [
-      'system_phase',
-      'break_even_cop',
-      'control_enabled',
-      'heat_pump',
-      'auxiliary_producer'
-    ];
+    const list = this.config.diagnostic_attributes || DEFAULT_SYSTEM_DIAGNOSTICS;
     return list.includes(attrKey);
   }
 
@@ -277,6 +265,9 @@ export class HvacFusionSystemCard extends LitElement {
     }
 
     .kpi-tile {
+      display: grid;
+      grid-template-rows: 1fr auto auto;
+      align-items: center;
       background: rgba(15, 23, 42, 0.45);
       border: 1px solid rgba(255, 255, 255, 0.06);
       border-radius: 8px;
