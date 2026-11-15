@@ -35,7 +35,7 @@ HVAC Fusion then decides, moment to moment, which emitter is most cost-effective
 
 ## Frontend Dashboard Cards
 
-HVAC Fusion automatically bundles and serves two companion Lovelace cards for visualizing and editing climate schedules directly on your dashboards. No separate HACS install or manual resource entry is required—the integration's built-in loader serves and content-versions the bundle automatically.
+HVAC Fusion automatically bundles and serves three companion Lovelace cards for system-wide monitoring and editing climate schedules directly on your dashboards. No separate Marketplace install or manual resource entry is required—the integration's built-in loader serves and content-versions the bundle automatically.
 
 ```yaml
 # Example Lovelace dashboard configuration
@@ -79,30 +79,29 @@ A comprehensive companion card for living space dashboards bringing together 24-
 * **Temporary Comfort Bump**: Provides one-tap `🔥 Warmer (+2°)` and `❄️ Cooler (-2°)` adjustments that stack up to ±5°F and decay linearly back to the active schedule over 2 hours without mutating underlying schedule definitions.
 * **Space Details & Diagnostics**: An expandable accordion displaying real-time system phase (e.g. *Plateau Maintenance*, *Setback Recovery*), active producer, window interlock state, cycling emitter status, and coordinator explanation strings.
 * **Day Navigation**: Flip between days (`‹ Today ›`) to inspect upcoming schedule routines.
-* **Backwards Compatibility**: Seamlessly aliases the legacy `custom:climate-preset-timeline` card type.
 
 ### 3. `hvac-fusion-system-card` (System Economics, Producers & Diagnostics Card)
-A whole-system summary card for your main dashboard showing real-time operating mode, crossover economics, live costs and savings, producer status, and configurable plant diagnostics.
+A whole-system summary card for your main dashboard showing real-time operating mode, crossover economics, estimated costs and savings, producer status, and configurable system diagnostics.
 
 <img src="docs/images/hvac_fusion_system_card.png" alt="HVAC Fusion System Card" width="430">
 
-* **Mode & Plant Header**: Displays `Autonomous`, `Dry Run`, or `Advisory` status alongside the live economic crossover temperature, break-even COP (`COP*`), and total estimated space heat-loss load (`BTU/h`).
-* **Costs & Savings**: Shows the current optimized heating rate (`$/h`), live hourly and cumulative savings compared against fossil-fuel-only and heat-pump-only baselines, and side-by-side baseline rate pills.
+* **Mode & Summary Header**: Displays `Autonomous`, `Dry Run`, or `Advisory` status alongside the live economic crossover temperature, break-even COP (`COP*`), and total estimated space heat-loss load (`BTU/h`).
+* **Costs & Savings**: Shows the estimated optimized heating rate (`$/h`), hourly savings (`$/h` and `%` cheaper) compared against fossil-fuel-only and heat-pump-only baselines (modeled from your space parameters, outdoor temperature, tariffs, and producer profiles), and side-by-side baseline rate pills. (Cumulative `total_increasing` cost/savings sensors are also exposed for Home Assistant Statistics Graphs and Utility Meters.)
 * **Producers**: Compact status cards for every configured producer (`Idle`, `Heating`, `Cooling`, `Locked Out`) with live telemetry (heat pump COP and mode lock, boiler return temperature, efficiency, and condensing state).
-* **System Details & Diagnostics**: Expandable drawer with visual-editor checkboxes for `system_phase`, `break_even_cop`, `control_enabled`, `heat_pump`, `auxiliary_producer`, and `cumulative_estimated_cost`.
+* **System Details & Diagnostics**: Expandable drawer with selectable diagnostic pills for `system_phase`, `break_even_cop`, `control_enabled`, `heat_pump`, `auxiliary_producer`, and `cumulative_estimated_cost`.
 
-### Schedule Edit Mutual Exclusion Locks
-When editing schedules in `schedule-preset-card`, clicking `[ ✎ Edit ]` invokes the `hvac_fusion.acquire_schedule_lock` service (setting a 300s TTL lock and exposing `schedule_editing: true` on the space's climate entity). This signals to external automations and tools that consult this lock to pause automated schedule adjustments while a human is actively making edits. When finished, clicking `[ ✓ Done ]` releases the lock. Both cards use progressive enhancement—if used standalone without HVAC Fusion, the cards operate cleanly without errors.
+### Edit Protection
+When you click `[ ✎ Edit ]` in `schedule-preset-card`, the schedule editor is protected against simultaneous edits from automations or other tools until you click `[ ✓ Done ]` (or after a short timeout). All cards also work standalone if used without the HVAC Fusion integration.
 
 ## Installation
 
-### Via HACS (Recommended)
+### Via Marketplace (Recommended)
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=dlarrick&repository=hvac-fusion&category=integration)
 
-Or manually add as a Custom Repository in HACS:
-1. Ensure [HACS](https://hacs.xyz/) is installed in Home Assistant.
-2. In HACS, navigate to **Integrations** > **Custom repositories** (or open the top-right menu).
+Or manually add as a Custom Repository in Marketplace (formerly HACS):
+1. Ensure [Marketplace (HACS)](https://hacs.xyz/) is installed in Home Assistant.
+2. In Marketplace, navigate to **Integrations** > **Custom repositories** (or open the top-right menu).
 3. Add `https://github.com/dlarrick/hvac-fusion` with category **Integration**.
 4. Download and restart Home Assistant.
 
@@ -135,13 +134,17 @@ Even if your boiler uses a dumb wall thermostat or your mini-split has no Wi-Fi 
 1. **Add a Space** under **Manage Spaces**: enter its room temperature sensor, floor area, ceiling height, and insulation/envelope score.
 2. **Attach Emitters** to the space (mini-split head capacity, hydronic emitter type such as baseboard vs. radiant floor, etc.) and **leave the Physical Actuation Entity blank**.
 
-With this in place, HVAC Fusion models your space's actual heat-loss load, boiler short-cycling and return-water temperature derates, and mini-split line-loss derates—producing a much more rigorous **space-aware economic crossover temperature** (both per-space and UA-weighted across spaces) while safely skipping hardware actuation for any emitter without an entity.
+With this in place, HVAC Fusion models your space's actual heat-loss load, boiler short-cycling, and return-water temperature efficiency penalties—producing a much more rigorous **space-aware economic crossover temperature** (both per-space and UA-weighted across spaces) while safely skipping hardware actuation for any emitter without an entity.
 
 > **Important:** Even in Advisory or Dry Run mode, each virtual Space climate entity (`climate.<space_id>_space`) must be turned on (`heat` or `heat_cool`, or an active `on` schedule block) with a heating setpoint (`heat_to`) above the outdoor temperature. If the Space climate entity or its active schedule is `off`, heat loss (`BTU/h`) and `$/hr` cost/savings estimates will remain `0` / unavailable.
 
 ### Full Configuration
 
-If you do have smart thermostats and connected mini-splits, HVAC Fusion can do much more. Use the Configuration to define your Spaces and Emitters as described above. HVAC Fusion will create a new virtual thermostat for each space. Use these in your dashboards instead of the underlying per-emitter thermostats.
+If you do have smart thermostats and connected mini-splits, HVAC Fusion can do much more. Use the Configuration to define your Spaces and Emitters as described above.
+
+> [!IMPORTANT]
+> **Control your rooms through HVAC Fusion's virtual Space thermostats (`climate.<space_id>_space`), not the underlying physical thermostats.**
+> HVAC Fusion creates one virtual thermostat per space. Put *these* on your dashboards and in your automations and voice assistants—HVAC Fusion handles translating your comfort setpoints and schedules into commands for whichever emitter (heat pump, boiler zone, or both) is most economical. Even if your underlying physical thermostats don't support `heat_cool` (auto) mode—or share a multi-split outdoor unit that can't heat and cool simultaneously—each virtual Space thermostat supports full `heat_cool` control and resolves mode conflicts automatically.
 
 For complete field descriptions and setup details, see the [Configuration Reference](CONFIGURATION.md).
 
@@ -149,8 +152,9 @@ For complete field descriptions and setup details, see the [Configuration Refere
    - Outdoor temperature sensor
    - Solar export sensor (optional)
 2. Manage Producers:
-   - Boilers (natural gas or propane, with manufacturer profiles or generic/custom)
-   - Heat pump outdoor units (with manufacturer profiles or generic/custom)
+   - Boilers (natural gas, propane, or fuel oil, with manufacturer or generic profiles)
+   - Heat pump outdoor units (with manufacturer or generic profiles)
+   - *(Don't see your exact model? Use a generic profile for now—contributions of new equipment profiles to [`hvac-crossover`](https://github.com/dlarrick/hvac-crossover) via GitHub issues or PRs are very welcome!)*
 3. Manage Spaces:
    - Define spaces (rooms or zones), temperature sensors, and room dimensions
    - Arbitration priority (resolves heat/cool mode conflicts across multi-split heads sharing an outdoor unit)
@@ -165,17 +169,6 @@ For complete field descriptions and setup details, see the [Configuration Refere
    - Setpoint cycling hysteresis band
    - Evaluation interval
 
-#### Fuel Tariffs
-
-When configuring energy rates for economic crossover calculations, consider how each fuel is billed:
-
-* **Utility-Metered Energy (Electricity & Natural Gas):** Metered and billed on-demand per unit consumed (kWh, therm, or CCF). Enter your effective marginal utility rate (including volumetric delivery and supply charges, but excluding fixed monthly meter charges). You can also link dynamic `sensor` entities for time-of-use (TOU) or real-time tariffs.
-* **Bulk-Delivered Fuels (Heating Oil & Propane):** Delivered and paid for in bulk to on-site storage tanks. When deciding what rate to enter:
-  * **Marginal Replacement Cost (Recommended):** In most cases, the economically optimal rate to configure is the **expected cost to replace consumed fuel** (the current market spot price or anticipated next delivery price), rather than the historical price paid on the previous delivery ticket. Treating fuel already sitting in your tank as a sunk cost ensures HVAC Fusion does not burn through cheap off-season fuel prematurely if replacing it mid-winter will be significantly more expensive.
-  * **Pre-Buy Contracts or Sufficient Seasonal Reserve (Exception):** If you locked in a fixed pre-buy contract for the winter, or your tank volume is large enough to comfortably carry you through the entire heating season without needing a refill, the contracted rate (or paid price) represents your true marginal replacement cost.
-
-You can enter a static rate per gallon in the Policies & Tariffs hub or provide an `input_number` / template `sensor` to track changing market or supplier rates dynamically.
-
 #### Examples
 
 **Open Floorplan**
@@ -184,15 +177,26 @@ This space has one hydronic zone off a boiler, and two mini-split heads in diffe
 **Bedrooms**
 This space has one hydronic zone for the whole floor, and each bedroom has its own mini-split head. Define this as one space per room, with its own mini-split and the boiler zone in each. Whichever space has the primary thermostat for the boiler zone should be marked "Primary" and the others marked "Secondary".
 
-### Dry Run Mode
+> [!TIP]
+> **Choosing Fuel Tariff Rates**
+> When configuring energy rates for economic crossover calculations, consider how each fuel is billed:
+>
+> * **Utility-Metered Energy (Electricity & Natural Gas):** Metered and billed on-demand per unit consumed (kWh, therm, or CCF). Enter your effective marginal utility rate (including volumetric delivery and supply charges, but excluding fixed monthly meter charges). You can also link dynamic `sensor` entities for time-of-use (TOU) or real-time tariffs.
+> * **Bulk-Delivered Fuels (Heating Oil & Propane):** Delivered and paid for in bulk to on-site storage tanks. When deciding what rate to enter:
+>   * **Marginal Replacement Cost (Recommended):** In most cases, the economically optimal rate to configure is the **expected cost to replace consumed fuel** (the current market spot price or anticipated next delivery price), rather than the historical price paid on the previous delivery ticket. Treating fuel already sitting in your tank as a sunk cost ensures HVAC Fusion does not burn through cheap off-season fuel prematurely if replacing it mid-winter will be significantly more expensive.
+>   * **Pre-Buy Contracts or Sufficient Seasonal Reserve (Exception):** If you locked in a fixed pre-buy contract for the winter, or your tank volume is large enough to comfortably carry you through the entire heating season without needing a refill, the contracted rate (or paid price) represents your true marginal replacement cost.
+>
+> You can enter a static rate per gallon in the Policies & Tariffs hub or provide an `input_number` / template `sensor` to track changing market or supplier rates dynamically.
 
-Maybe you're not comfortable turning this all on at once. There is a dry-run mode (enabled by default) where HVAC Fusion doesn't actually control the individual emitter thermostats, but just shows what it would have done (indicated by `control_enabled: false` on the crossover sensor). Note that your virtual Space climate entities (`climate.<space_id>_space`) still need to be in `heat` or `heat_cool` mode (not `off`) so HVAC Fusion knows your target comfort bounds when simulating load, costs, and savings.
+### Dry Run Mode (Next Step Before Going Live)
+
+Once you're ready to link your physical thermostats (`entity_id`) to your emitters, leave **Control Enabled** unchecked (Dry Run mode, enabled by default). HVAC Fusion will read your physical thermostats' live states and log the exact mode and setpoint commands it *would* send to Home Assistant's logbook/system log—without actually actuating your hardware (`control_enabled: false` on the crossover sensor). Note that your virtual Space climate entities (`climate.<space_id>_space`) still need to be in `heat` or `heat_cool` mode (not `off`) so HVAC Fusion knows your target comfort bounds when simulating load, costs, and savings.
 
 ## Entities & Attributes
 
 HVAC Fusion creates entities for your spaces, central plant advisory, and equipment producers:
 
-### Virtual Space Climate Entities (`climate.<space_id>_fusion`)
+### Virtual Space Climate Entities (`climate.<space_id>_space`)
 A virtual thermostat is created for each configured living space to manage target setpoints, presets, and schedules on your dashboards:
 * **State / Modes:** `heat_cool`, `heat`, `cool`, `off`
 * **HVAC Action:** `heating`, `cooling`, `idle`, `off`
@@ -201,16 +205,20 @@ A virtual thermostat is created for each configured living space to manage targe
   * `space_id`: Identifier for the thermal zone.
   * `preset_mode`: Currently active preset mode (`manual` or user-defined preset).
   * `active_schedule`: Entity ID of the Home Assistant `schedule` entity currently driving this preset (if linked).
+  * `schedule_editing`: `true` while the linked schedule is locked for interactive editing.
+  * `presets`: Mapping of configured preset names to their linked Home Assistant `schedule` entities.
   * `active_producer`: ID of the producer currently supplying heating or cooling to this space (`None` when idle).
   * `active_delivery_units`: List of emitter delivery unit IDs currently commanded active.
   * `cycling_emitters`: List of emitter IDs currently held by setpoint limit cycling hysteresis.
+  * `economic_crossover_temp`: Space-specific economic crossover temperature in `°F` accounting for the emitters serving this space.
   * `window_open`: `true` if an associated window or door contact sensor is currently open (pausing conditioning).
   * `phase`: Operational phase for this living space (`plateau_maintenance`, `setback_recovery`, or `passive_ventilation`).
   * `in_recovery`: `true` if the room has an active thermal deficit meeting or exceeding the setback recovery threshold.
   * `explanation`: Human-readable summary of the coordinator's dispatch reasoning for this space.
+  * `current_boost`: Current temporary comfort bump offset in `°F` (`0` when inactive).
 
 ### Economic Crossover Temperature Sensor (`sensor.<coordinator_id>_economic_crossover_temperature`)
-Central plant advisory sensor indicating the outdoor temperature break-even point between heat pump heating and auxiliary fuel:
+System-wide advisory sensor indicating the outdoor temperature break-even point between heat pump heating and auxiliary fuel:
 * **State:** Outdoor crossover temperature in `°F` (`device_class: temperature`). If the outdoor temperature is below this threshold, auxiliary heat is more cost-effective than running the heat pump.
 * **State Attributes:**
   * `break_even_cop`: The coefficient of performance the heat pump must achieve to match auxiliary fuel cost at current tariffs.
@@ -218,6 +226,7 @@ Central plant advisory sensor indicating the outdoor temperature break-even poin
   * `auxiliary_producer`: Equipment ID of the auxiliary boiler or furnace compared against the heat pump.
   * `system_phase`: Macro-system operational phase (`plateau_maintenance`, `setback_recovery`, `passive_ventilation`, `away_coast`).
   * `control_enabled`: `true` when physical thermostat actuation is enabled; `false` in simulation (dry-run) mode.
+  * `advisory_only`: `true` when no emitters have a controllable `entity_id` configured.
 
 ### Producer Status Sensors (`sensor.<coordinator_id>_<producer_id>`)
 A dedicated status sensor is created for each piece of heating or cooling equipment (heat pump outdoor unit, boiler, or furnace):

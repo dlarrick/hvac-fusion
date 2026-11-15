@@ -4875,12 +4875,22 @@ let HvacFusionSystemCard = class extends i {
     const hasCostData = Boolean(rateState || savingsState);
     const heatLossBtu = rateAttrs.total_heat_loss_btu_per_hr;
     const producers = this.config.show_producers !== false ? this.getProducerStates() : [];
-    const fossilSavedTotal = savingsAttrs.savings_vs_fossil_fuel_total ?? (savingsState == null ? void 0 : savingsState.state);
-    const hpSavedTotal = savingsAttrs.savings_vs_heat_pump_total;
+    savingsAttrs.savings_vs_fossil_fuel_total ?? (savingsState == null ? void 0 : savingsState.state);
+    savingsAttrs.savings_vs_heat_pump_total;
     const fossilSavedHr = rateAttrs.savings_vs_fossil_fuel_per_hr ?? savingsAttrs.savings_vs_fossil_fuel_per_hr;
     const hpSavedHr = rateAttrs.savings_vs_heat_pump_per_hr ?? savingsAttrs.savings_vs_heat_pump_per_hr;
     const fossilNum = Number(fossilSavedHr);
     const hpNum = Number(hpSavedHr);
+    const formatSavingsPct = (savedVal, baselineVal) => {
+      const saved = Number(savedVal);
+      const base = Number(baselineVal);
+      if (savedVal === void 0 || savedVal === null || baselineVal === void 0 || baselineVal === null || Number.isNaN(saved) || Number.isNaN(base) || base <= 0) {
+        return "—";
+      }
+      const pct = saved / base * 100;
+      if (Math.abs(pct) < 0.5) return "Even";
+      return pct > 0 ? `${Math.round(pct)}% cheaper` : `${Math.round(Math.abs(pct))}% more`;
+    };
     return b`
       <ha-card>
         <!-- Header -->
@@ -4919,14 +4929,14 @@ let HvacFusionSystemCard = class extends i {
                     <div class="kpi-value ${!Number.isNaN(fossilNum) ? fossilNum > 0 ? "positive" : fossilNum < 0 ? "negative" : "" : ""}">
                       ${this.formatRate(fossilSavedHr)}
                     </div>
-                    <div class="kpi-sub">${this.formatCurrency(fossilSavedTotal, 2)} total</div>
+                    <div class="kpi-sub">${formatSavingsPct(fossilSavedHr, rateAttrs.fossil_fuel_baseline_cost_per_hr)}</div>
                   </div>
                   <div class="kpi-tile">
                     <div class="kpi-label">Saving vs Heat Pump</div>
                     <div class="kpi-value ${!Number.isNaN(hpNum) ? hpNum > 0 ? "positive" : hpNum < 0 ? "negative" : "" : ""}">
                       ${this.formatRate(hpSavedHr)}
                     </div>
-                    <div class="kpi-sub">${this.formatCurrency(hpSavedTotal, 2)} total</div>
+                    <div class="kpi-sub">${formatSavingsPct(hpSavedHr, rateAttrs.heat_pump_baseline_cost_per_hr)}</div>
                   </div>
                 </div>
                 <div class="diag-pills">
