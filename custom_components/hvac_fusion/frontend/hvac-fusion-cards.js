@@ -4385,7 +4385,6 @@ const AVAILABLE_SYSTEM_DIAGNOSTICS = [
   { key: "control_enabled", label: "Control Mode (Autonomous / Dry Run)" },
   { key: "heat_pump", label: "Primary Heat Pump ID" },
   { key: "auxiliary_producer", label: "Auxiliary Producer ID" },
-  { key: "total_heat_loss_btu_per_hr", label: "Total Heat Loss (BTU/h)" },
   { key: "cumulative_estimated_cost", label: "Cumulative Estimated Cost" }
 ];
 let HvacFusionSystemEditor = class extends i {
@@ -4839,15 +4838,6 @@ let HvacFusionSystemCard = class extends i {
     if (this.shouldShowAttribute("auxiliary_producer") && xoverAttrs.auxiliary_producer) {
       pills.push(pill("Auxiliary", String(xoverAttrs.auxiliary_producer)));
     }
-    if (this.shouldShowAttribute("total_heat_loss_btu_per_hr")) {
-      const btu = rateAttrs.total_heat_loss_btu_per_hr;
-      pills.push(
-        pill(
-          "Heat Loss",
-          typeof btu === "number" ? `${Math.round(btu).toLocaleString()} BTU/h` : "N/A"
-        )
-      );
-    }
     if (this.shouldShowAttribute("cumulative_estimated_cost")) {
       const cum = savingsAttrs.cumulative_estimated_cost ?? rateAttrs.cumulative_estimated_cost;
       if (cum !== void 0 && cum !== null) {
@@ -4885,12 +4875,22 @@ let HvacFusionSystemCard = class extends i {
     const hasCostData = Boolean(rateState || savingsState);
     const heatLossBtu = rateAttrs.total_heat_loss_btu_per_hr;
     const producers = this.config.show_producers !== false ? this.getProducerStates() : [];
-    const fossilSavedTotal = savingsAttrs.savings_vs_fossil_fuel_total ?? (savingsState == null ? void 0 : savingsState.state);
-    const hpSavedTotal = savingsAttrs.savings_vs_heat_pump_total;
+    savingsAttrs.savings_vs_fossil_fuel_total ?? (savingsState == null ? void 0 : savingsState.state);
+    savingsAttrs.savings_vs_heat_pump_total;
     const fossilSavedHr = rateAttrs.savings_vs_fossil_fuel_per_hr ?? savingsAttrs.savings_vs_fossil_fuel_per_hr;
     const hpSavedHr = rateAttrs.savings_vs_heat_pump_per_hr ?? savingsAttrs.savings_vs_heat_pump_per_hr;
     const fossilNum = Number(fossilSavedHr);
     const hpNum = Number(hpSavedHr);
+    const formatSavingsPct = (savedVal, baselineVal) => {
+      const saved = Number(savedVal);
+      const base = Number(baselineVal);
+      if (savedVal === void 0 || savedVal === null || baselineVal === void 0 || baselineVal === null || Number.isNaN(saved) || Number.isNaN(base) || base <= 0) {
+        return "—";
+      }
+      const pct = saved / base * 100;
+      if (Math.abs(pct) < 0.5) return "Even";
+      return pct > 0 ? `${Math.round(pct)}% cheaper` : `${Math.round(Math.abs(pct))}% more`;
+    };
     return b`
       <ha-card>
         <!-- Header -->
@@ -4929,14 +4929,14 @@ let HvacFusionSystemCard = class extends i {
                     <div class="kpi-value ${!Number.isNaN(fossilNum) ? fossilNum > 0 ? "positive" : fossilNum < 0 ? "negative" : "" : ""}">
                       ${this.formatRate(fossilSavedHr)}
                     </div>
-                    <div class="kpi-sub">${this.formatCurrency(fossilSavedTotal, 2)} total</div>
+                    <div class="kpi-sub">${formatSavingsPct(fossilSavedHr, rateAttrs.fossil_fuel_baseline_cost_per_hr)}</div>
                   </div>
                   <div class="kpi-tile">
                     <div class="kpi-label">Saving vs Heat Pump</div>
                     <div class="kpi-value ${!Number.isNaN(hpNum) ? hpNum > 0 ? "positive" : hpNum < 0 ? "negative" : "" : ""}">
                       ${this.formatRate(hpSavedHr)}
                     </div>
-                    <div class="kpi-sub">${this.formatCurrency(hpSavedTotal, 2)} total</div>
+                    <div class="kpi-sub">${formatSavingsPct(hpSavedHr, rateAttrs.heat_pump_baseline_cost_per_hr)}</div>
                   </div>
                 </div>
                 <div class="diag-pills">

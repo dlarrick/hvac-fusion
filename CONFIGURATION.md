@@ -88,13 +88,13 @@ Profiles provide manufacturer-tested full-load and part-load COP curves, turndow
 
 ## 4. Spaces (Thermal Zones)
 
-A Space represents an independently monitored room or physical zone. Each configured space generates a unified Home Assistant virtual climate entity (`climate.<space_id>_fusion`).
+A Space represents an independently monitored room or physical zone. Each configured space generates a unified Home Assistant virtual climate entity (`climate.<space_id>_space`).
 
 ### Space Configuration Fields
 
 | Field | Description | Type / Unit | Default |
 | :--- | :--- | :--- | :--- |
-| **Space ID** | Unique slug for entity generation (e.g. `living_room` yields `climate.living_room_fusion`). | String | Auto-slugged |
+| **Space ID** | Unique slug for entity generation (e.g. `living_room` yields `climate.living_room_space`). | String | Auto-slugged |
 | **Display Name** | Friendly name (e.g. `Living Room`, `Primary Bedroom`). | String | Required |
 | **Temperature Sensor** | Current space temperature sensor (from a dedicated room sensor or a climate entity). | `climate.*` or `sensor.*` | Required |
 | **Floor Area** | Floor surface area in square feet. | Sq. Ft. | `300.0` |
@@ -113,7 +113,7 @@ A Space represents an independently monitored room or physical zone. Each config
 
 Emitters are the physical heating and cooling terminal units installed inside a space. A space can contain multiple emitters connected to different producers (e.g. a ductless mini-split head and a hydronic baseboard loop).
 
-> **Advisory-Only / Dumb Equipment:** The **Physical Actuation Entity** (`entity_id`) is **optional** on all emitter types. If you have a non-connected mini-split or a boiler on a dumb wall thermostat, leave the actuation entity blank—HVAC Fusion will still use the emitter's physical properties (nominal BTU, hydronic type, return-water temp, line-loss derates) to compute a rigorous space-aware economic crossover temperature without attempting to control hardware. Even in Advisory or Dry Run mode, keep each virtual Space climate entity (`climate.<space_id>_space`) in `heat` or `heat_cool` mode (not `off`, and not in an `off` schedule gap) so heat load and `$/hr` cost/savings estimates can be modeled against your target setpoint.
+> **Advisory-Only / Dumb Equipment:** The **Physical Actuation Entity** (`entity_id`) is **optional** on all emitter types. If you have a non-connected mini-split or a boiler on a dumb wall thermostat, leave the actuation entity blank—HVAC Fusion will still use the emitter's physical properties (nominal BTU, hydronic type, return-water temp) to compute a rigorous space-aware economic crossover temperature without attempting to control hardware. Even in Advisory or Dry Run mode, keep each virtual Space climate entity (`climate.<space_id>_space`) in `heat` or `heat_cool` mode (not `off`, and not in an `off` schedule gap) so heat load and `$/hr` cost/savings estimates can be modeled against your target setpoint.
 
 ### Emitter Types & Properties
 
@@ -158,11 +158,11 @@ Accessible under **Options Flow → Policies & Tariffs**:
 
 ## 7. Using HVAC Fusion in Dashboards
 
-Once configured, place the virtual `climate.<space_id>_fusion` thermostats on your Home Assistant dashboards:
+Once configured, place the virtual `climate.<space_id>_space` thermostats on your Home Assistant dashboards:
 
 * Set your desired space heating/cooling targets on the virtual thermostat.
 * HVAC Fusion continually computes real-time delivered $/MMBtu costs for all available emitters, checks equipment operational envelopes, executes dual-fuel crossover dispatch, and commands the underlying physical hardware.
 * Monitor entities provided for spaces and producers:
   * `sensor.hvac_fusion_economic_crossover_temperature`: Central coordinator break-even switchover temperature (with `break_even_cop`, `heat_pump`, `auxiliary_producer`, `system_phase`, and `control_enabled` attributes).
   * `sensor.hvac_fusion_<producer_id>`: Dedicated status sensor for each energy producer reporting operational state (`idle`, `heating`, `cooling`, `locked_out`) with producer-specific metrics (current COP, capacity derate, mode lock, estimated return temp, AFUE/efficiency, condensing state, and active spaces).
-  * `climate.<space_id>_fusion`: Space virtual thermostat with room-specific state (`active_producer`, `active_delivery_units`, `cycling_emitters`, `phase`, `in_recovery`, `window_open`, and dispatch `explanation`).
+  * `climate.<space_id>_space`: Space virtual thermostat with room-specific state (`active_producer`, `active_delivery_units`, `cycling_emitters`, `phase`, `in_recovery`, `window_open`, and dispatch `explanation`).
