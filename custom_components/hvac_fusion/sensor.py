@@ -19,6 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from . import get_manager
@@ -47,6 +48,8 @@ async def async_setup_platform(
     if manager.topology and manager.topology.producers:
         for producer in manager.topology.producers:
             entities.append(HvacFusionProducerSensor(manager, producer))
+    if manager.topology and manager.topology.spaces:
+        entities.extend(_build_cost_sensors(manager))
     async_add_entities(entities)
 
 
@@ -63,7 +66,53 @@ async def async_setup_entry(
     if manager.topology and manager.topology.producers:
         for producer in manager.topology.producers:
             entities.append(HvacFusionProducerSensor(manager, producer))
+    if manager.topology and manager.topology.spaces:
+        entities.extend(_build_cost_sensors(manager))
     async_add_entities(entities)
+
+
+def _build_cost_sensors(manager: Any) -> list[SensorEntity]:
+    """Build the 2x3 cost/savings matrix sensors (2 enabled by default, 6 opt-in)."""
+    return [
+        HvacFusionEstimatedCostRateSensor(manager),
+        HvacFusionEstimatedSavingsSensor(manager),
+        HvacFusionCumulativeCostMatrixSensor(
+            manager,
+            key="estimated_savings_vs_heat_pump",
+            name="Estimated savings vs heat pump",
+            manager_attr="cumulative_savings_vs_heat_pump",
+        ),
+        HvacFusionCumulativeCostMatrixSensor(
+            manager,
+            key="estimated_heating_cost",
+            name="Estimated heating cost",
+            manager_attr="cumulative_estimated_cost",
+        ),
+        HvacFusionCumulativeCostMatrixSensor(
+            manager,
+            key="estimated_fossil_fuel_baseline_cost",
+            name="Estimated fossil fuel baseline cost",
+            manager_attr="cumulative_fossil_fuel_baseline_cost",
+        ),
+        HvacFusionCumulativeCostMatrixSensor(
+            manager,
+            key="estimated_heat_pump_baseline_cost",
+            name="Estimated heat pump baseline cost",
+            manager_attr="cumulative_heat_pump_baseline_cost",
+        ),
+        HvacFusionRateMatrixSensor(
+            manager,
+            key="estimated_fossil_fuel_baseline_cost_rate",
+            name="Estimated fossil fuel baseline cost rate",
+            estimate_key="fossil_fuel_baseline_cost_per_hr",
+        ),
+        HvacFusionRateMatrixSensor(
+            manager,
+            key="estimated_heat_pump_baseline_cost_rate",
+            name="Estimated heat pump baseline cost rate",
+            estimate_key="heat_pump_baseline_cost_per_hr",
+        ),
+    ]
 
 
 class HvacFusionSensorBase(SensorEntity):
@@ -130,6 +179,12 @@ class HvacFusionEconomicCrossoverTemperatureSensor(HvacFusionSensorBase):
         attrs["break_even_cop"] = self.manager.break_even_cop
         attrs["system_phase"] = self.manager.system_phase
         attrs["control_enabled"] = self.manager.control_enabled
+        spaces = self.manager.topology.spaces if self.manager.topology else []
+        attrs["advisory_only"] = not any(
+            getattr(emitter, "entity_id", None)
+            for space in spaces
+            for emitter in getattr(space, "emitters", [])
+        )
         return attrs
 
 
@@ -288,3 +343,169 @@ class HvacFusionProducerSensor(HvacFusionSensorBase):
                 attrs["condensing_state"] = p_dir.condensing_state if p_dir else None
 
         return attrs
+
+
+class HvacFusionEstimatedCostRateSensor(HvacFusionSensorBase):
+    """Sensor reporting estimated hourly heating cost rate and baseline comparisons."""
+
+    _attr_translation_key = "estimated_heating_cost_rate"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "USD/h"
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, manager: Any) -> None:
+        """Initialize sensor."""
+        super().__init__(manager)
+        coord_id = getattr(manager, "entry_id", None) or manager.conf.get(
+            CONF_ID, DOMAIN
+        )
+        self._attr_unique_id = f"{coord_id}_estimated_heating_cost_rate"
+        self._attr_name = "Estimated heating cost rate"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the estimated current heating cost rate in USD/h."""
+        return self.manager.cost_estimates.get("chosen_cost_per_hr")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return baseline cost rates and hourly savings comparisons."""
+        est = self.manager.cost_estimates
+        return {
+            "fossil_fuel_baseline_cost_per_hr": est.get(
+                "fossil_fuel_baseline_cost_per_hr"
+            ),
+            "heat_pump_baseline_cost_per_hr": est.get("heat_pump_baseline_cost_per_hr"),
+            "savings_vs_fossil_fuel_per_hr": est.get("savings_vs_fossil_fuel_per_hr"),
+            "savings_vs_heat_pump_per_hr": est.get("savings_vs_heat_pump_per_hr"),
+            "total_heat_loss_btu_per_hr": est.get("total_heat_loss_btu_per_hr"),
+            "cumulative_estimated_cost": round(
+                self.manager.cumulative_estimated_cost, 2
+            ),
+        }
+
+
+class HvacFusionEstimatedSavingsSensor(HvacFusionSensorBase, RestoreEntity):
+    """Sensor reporting cumulative estimated cost savings vs running fossil fuel alone."""
+
+    _attr_translation_key = "estimated_savings_vs_fossil_fuel"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = "USD"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, manager: Any) -> None:
+        """Initialize sensor."""
+        super().__init__(manager)
+        coord_id = getattr(manager, "entry_id", None) or manager.conf.get(
+            CONF_ID, DOMAIN
+        )
+        self._attr_unique_id = f"{coord_id}_estimated_savings_vs_fossil_fuel"
+        self._attr_name = "Estimated savings vs fossil fuel"
+
+    async def async_added_to_hass(self) -> None:
+        """Restore cumulative savings and baseline totals across restarts."""
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            if last_state.state not in ("unknown", "unavailable", None):
+                try:
+                    self.manager.cumulative_savings_vs_fossil_fuel = float(
+                        last_state.state
+                    )
+                except (ValueError, TypeError):
+                    pass
+            attr_map = {
+                "savings_vs_heat_pump_total": "cumulative_savings_vs_heat_pump",
+                "cumulative_estimated_cost": "cumulative_estimated_cost",
+                "cumulative_fossil_fuel_baseline_cost": "cumulative_fossil_fuel_baseline_cost",
+                "cumulative_heat_pump_baseline_cost": "cumulative_heat_pump_baseline_cost",
+            }
+            for attr_key, mgr_attr in attr_map.items():
+                val = last_state.attributes.get(attr_key)
+                if val is not None:
+                    try:
+                        setattr(self.manager, mgr_attr, float(val))
+                    except (ValueError, TypeError):
+                        pass
+        await super().async_added_to_hass()
+
+    @property
+    def native_value(self) -> float:
+        """Return cumulative estimated savings vs fossil-fuel-only baseline in USD."""
+        return round(self.manager.cumulative_savings_vs_fossil_fuel, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return cumulative and hourly savings vs both baselines."""
+        est = self.manager.cost_estimates
+        return {
+            "savings_vs_fossil_fuel_total": round(
+                self.manager.cumulative_savings_vs_fossil_fuel, 2
+            ),
+            "savings_vs_heat_pump_total": round(
+                self.manager.cumulative_savings_vs_heat_pump, 2
+            ),
+            "savings_vs_fossil_fuel_per_hr": est.get("savings_vs_fossil_fuel_per_hr"),
+            "savings_vs_heat_pump_per_hr": est.get("savings_vs_heat_pump_per_hr"),
+            "cumulative_estimated_cost": round(
+                self.manager.cumulative_estimated_cost, 2
+            ),
+            "cumulative_fossil_fuel_baseline_cost": round(
+                self.manager.cumulative_fossil_fuel_baseline_cost, 2
+            ),
+            "cumulative_heat_pump_baseline_cost": round(
+                self.manager.cumulative_heat_pump_baseline_cost, 2
+            ),
+            "note": "Estimate based on space envelope heat-loss model and equipment profiles",
+        }
+
+
+class HvacFusionCumulativeCostMatrixSensor(HvacFusionSensorBase):
+    """Opt-in cumulative cost/savings matrix sensor (disabled by default)."""
+
+    _attr_entity_registry_enabled_default = False
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = "USD"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, manager: Any, key: str, name: str, manager_attr: str) -> None:
+        """Initialize opt-in cumulative matrix sensor."""
+        super().__init__(manager)
+        coord_id = getattr(manager, "entry_id", None) or manager.conf.get(
+            CONF_ID, DOMAIN
+        )
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{coord_id}_{key}"
+        self._attr_name = name
+        self._manager_attr = manager_attr
+
+    @property
+    def native_value(self) -> float:
+        """Return cumulative USD value from manager."""
+        return round(float(getattr(self.manager, self._manager_attr, 0.0)), 2)
+
+
+class HvacFusionRateMatrixSensor(HvacFusionSensorBase):
+    """Opt-in hourly baseline cost rate matrix sensor (disabled by default)."""
+
+    _attr_entity_registry_enabled_default = False
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "USD/h"
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, manager: Any, key: str, name: str, estimate_key: str) -> None:
+        """Initialize opt-in hourly rate matrix sensor."""
+        super().__init__(manager)
+        coord_id = getattr(manager, "entry_id", None) or manager.conf.get(
+            CONF_ID, DOMAIN
+        )
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{coord_id}_{key}"
+        self._attr_name = name
+        self._estimate_key = estimate_key
+
+    @property
+    def native_value(self) -> float | None:
+        """Return hourly USD/h rate from manager cost estimates."""
+        return self.manager.cost_estimates.get(self._estimate_key)

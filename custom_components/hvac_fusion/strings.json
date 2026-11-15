@@ -210,7 +210,7 @@
           "boiler_emitter_producer": "Bound Boiler Producer",
           "furnace_emitter_producer": "Bound Furnace Producer",
           "hydronic_type": "Hydronic Emitter Type",
-          "emitter_entity_id": "Physical Actuation Entity (climate or switch)",
+          "emitter_entity_id": "Physical Actuation Entity (Optional: climate or switch)",
           "emitter_nominal_btu": "Nominal Heat Pump Head Capacity (BTU)",
           "emitter_zone_id": "Hydronic Zone Identifier (e.g. z1)",
           "cancel": "Cancel Add"
@@ -331,7 +331,7 @@
           "boiler_emitter_producer": "Bound Boiler Producer",
           "furnace_emitter_producer": "Bound Furnace Producer",
           "hydronic_type": "Hydronic Emitter Type",
-          "entity_id": "Physical Actuation Entity (climate or switch)",
+          "entity_id": "Physical Actuation Entity (Optional: climate or switch)",
           "offset": "Target Setpoint Offset (°F)",
           "nominal_btu": "Nominal BTU (for Mini-Split)",
           "zone_id": "Zone ID (for Hydronic)",
@@ -358,7 +358,7 @@
           "boiler_emitter_producer": "Bound Boiler Producer",
           "furnace_emitter_producer": "Bound Furnace Producer",
           "hydronic_type": "Hydronic Emitter Type",
-          "entity_id": "Physical Actuation Entity (climate or switch)",
+          "entity_id": "Physical Actuation Entity (Optional: climate or switch)",
           "offset": "Target Setpoint Offset (°F)",
           "nominal_btu": "Nominal BTU (for Mini-Split)",
           "zone_id": "Zone ID (for Hydronic)",
@@ -392,6 +392,30 @@
     "sensor": {
       "economic_crossover_temperature": {
         "name": "Economic crossover temperature"
+      },
+      "estimated_heating_cost_rate": {
+        "name": "Estimated heating cost rate"
+      },
+      "estimated_savings_vs_fossil_fuel": {
+        "name": "Estimated savings vs fossil fuel"
+      },
+      "estimated_savings_vs_heat_pump": {
+        "name": "Estimated savings vs heat pump"
+      },
+      "estimated_heating_cost": {
+        "name": "Estimated heating cost"
+      },
+      "estimated_fossil_fuel_baseline_cost": {
+        "name": "Estimated fossil fuel baseline cost"
+      },
+      "estimated_heat_pump_baseline_cost": {
+        "name": "Estimated heat pump baseline cost"
+      },
+      "estimated_fossil_fuel_baseline_cost_rate": {
+        "name": "Estimated fossil fuel baseline cost rate"
+      },
+      "estimated_heat_pump_baseline_cost_rate": {
+        "name": "Estimated heat pump baseline cost rate"
       }
     }
   }

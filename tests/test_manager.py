@@ -1,13 +1,15 @@
 """Foundational integration tests for HVAC Fusion."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from custom_components.hvac_fusion import HvacFusionManager
 from custom_components.hvac_fusion.climate import HvacFusionSpaceClimate
 from custom_components.hvac_fusion.const import (
+    CONF_CONTROL_ENABLED,
     CONF_ELECTRIC_COST_PER_KWH,
     CONF_EMITTERS,
+    CONF_FUEL_TYPE,
     CONF_GAS_COST_PER_THERM,
     CONF_NOMINAL_BTU,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
@@ -18,6 +20,7 @@ from custom_components.hvac_fusion.const import (
     CONF_SHARED_BOILER_ROLE,
     CONF_SPACES,
     CONF_TARIFFS,
+    CONF_TEMP_SENSOR,
     CONF_TYPE,
 )
 from homeassistant.components.climate import HVACAction
@@ -495,3 +498,86 @@ def test_build_topology_envelope_score_and_thermal_mass():
     assert space.thermal_mass == 5
     assert abs(space.ua_factor - 15.0) < 0.01
     assert abs(space.thermal_capacitance_btu_per_f - (1000.0 * 0.018 * 24.0)) < 0.01
+
+
+@pytest.mark.asyncio
+async def test_advisory_only_space_and_emitters_without_entity_id():
+    """Spaces and emitters without entity_id still compute space-aware crossover without actuation errors."""
+    hass = MagicMock(spec=HomeAssistant)
+    hass.states = MagicMock()
+    hass.services = MagicMock()
+    hass.services.async_call = AsyncMock()
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *args: fn(*args))
+
+    def mock_state_get(entity_id):
+        state = MagicMock()
+        if entity_id == "sensor.outdoor_temp":
+            state.state = "35.0"
+        elif entity_id == "sensor.living_room_temp":
+            state.state = "66.0"
+        else:
+            return None
+        state.attributes = {}
+        return state
+
+    hass.states.get = mock_state_get
+
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_CONTROL_ENABLED: True,  # Even with control enabled, missing entity_id must not error
+        CONF_TARIFFS: {
+            "electric_cost_per_kwh": 0.25,
+            "gas_cost_per_therm": 1.50,
+        },
+        CONF_PRODUCERS: {
+            "hp1": {
+                CONF_NAME: "Heat Pump",
+                CONF_TYPE: "heat_pump",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+            },
+            "boiler1": {
+                CONF_NAME: "Boiler",
+                CONF_TYPE: "boiler",
+                CONF_FUEL_TYPE: "natural_gas",
+                CONF_PROFILE: "generic/modulating_condensing_boiler.json",
+            },
+        },
+        CONF_SPACES: [
+            {
+                CONF_ID: "living_room",
+                CONF_NAME: "Living Room",
+                CONF_TEMP_SENSOR: "sensor.living_room_temp",
+                "floor_area_sqft": 450.0,
+                "ceiling_height_ft": 9.0,
+                "envelope_score": 4,
+                "thermal_mass": 3,
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp1",
+                        "nominal_btu": 12000.0,
+                    },
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "boiler1",
+                        "zone_id": "z1",
+                        "hydronic_type": "fin_tube_baseboard",
+                    },
+                ],
+            }
+        ],
+    }
+
+    manager = HvacFusionManager(hass, conf)
+    await manager.async_init()
+
+    assert manager.emitter_entity_map == {}
+    assert len(manager.topology.spaces) == 1
+    assert len(manager.topology.spaces[0].emitters) == 2
+
+    await manager.async_evaluate()
+
+    assert manager.last_plan is not None
+    assert "living_room" in manager.last_plan.diagnostics.space_crossover_temps
+    assert manager.economic_crossover_temperature is not None
+    hass.services.async_call.assert_not_called()

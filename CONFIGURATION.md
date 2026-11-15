@@ -113,17 +113,19 @@ A Space represents an independently monitored room or physical zone. Each config
 
 Emitters are the physical heating and cooling terminal units installed inside a space. A space can contain multiple emitters connected to different producers (e.g. a ductless mini-split head and a hydronic baseboard loop).
 
+> **Advisory-Only / Dumb Equipment:** The **Physical Actuation Entity** (`entity_id`) is **optional** on all emitter types. If you have a non-connected mini-split or a boiler on a dumb wall thermostat, leave the actuation entity blank—HVAC Fusion will still use the emitter's physical properties (nominal BTU, hydronic type, return-water temp, line-loss derates) to compute a rigorous space-aware economic crossover temperature without attempting to control hardware. Even in Advisory or Dry Run mode, keep each virtual Space climate entity (`climate.<space_id>_space`) in `heat` or `heat_cool` mode (not `off`, and not in an `off` schedule gap) so heat load and `$/hr` cost/savings estimates can be modeled against your target setpoint.
+
 ### Emitter Types & Properties
 
 #### A. Mini-Split Indoor Head (`mini_split`)
 * **Producer**: Select the connected heat pump outdoor condenser (`heat_pump`).
-* **Entity ID**: The physical Home Assistant thermostat entity (`climate.*`) controlling this indoor head.
+* **Entity ID (Optional)**: The physical Home Assistant thermostat entity (`climate.*`) controlling this indoor head. Leave blank for advisory-only modeling.
 * **Nominal BTU**: Rated capacity of the indoor head (e.g., `6000`, `9000`, `12000`, `18000` BTU/h).
 * **Setpoint Offset (°F)**: Calibration adjustment added to target setpoints commanded to physical hardware (e.g., `+2.0` to compensate for a high-mounted sensor reading warmer than room level).
 
 #### B. Hydronic Loop Emitter (`hydronic`)
 * **Producer**: Select the connected boiler (`modulating_boiler`, `atmospheric_boiler`, `steam_boiler`).
-* **Entity ID**: Switch or climate entity controlling the zone valve or circulator (`switch.*` or `climate.*`).
+* **Entity ID (Optional)**: Switch or climate entity controlling the zone valve or circulator (`switch.*` or `climate.*`). Leave blank for dumb-thermostat / advisory-only modeling.
 * **Zone ID**: Identifier of the physical plumbing zone (e.g., `z1`, `z2`). Emitters sharing the same `zone_id` across rooms will be coordinated together.
 * **Hydronic Type**: Select emitter plumbing style to model water temperature and flow rate:
   * `fin_tube_baseboard`: Design water temp 160°F, $\Delta T$ 20°F, 3.5 GPM.
@@ -135,7 +137,7 @@ Emitters are the physical heating and cooling terminal units installed inside a 
 
 #### C. Warm-Air Furnace Register (`furnace`)
 * **Producer**: Select the central furnace.
-* **Entity ID**: Climate or switch entity controlling the damper or furnace call.
+* **Entity ID (Optional)**: Climate or switch entity controlling the damper or furnace call. Leave blank for advisory-only modeling.
 * **Setpoint Offset (°F)**: Optional calibration offset.
 
 ---

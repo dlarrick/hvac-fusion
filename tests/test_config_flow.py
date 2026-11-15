@@ -1300,14 +1300,7 @@ async def test_options_flow_cancel_in_all_add_steps(hass: HomeAssistant) -> None
     )
     assert result["step_id"] == "emitter_add"
 
-    # Submitting without entity_id triggers entity_required error
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_TYPE: "mini_split", "hp_emitter_producer": "hp1"}
-    )
-    assert result["step_id"] == "emitter_add"
-    assert result["errors"][CONF_ENTITY_ID] == "entity_required"
-
-    # Submitting with cancel=True returns cleanly to emitters_menu
+    # Submitting with cancel=True returns cleanly to emitters_menu without adding
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"cancel": True}
     )
@@ -1336,3 +1329,221 @@ async def test_options_flow_cancel_in_all_add_steps(hass: HomeAssistant) -> None
     assert saved_data[CONF_SPACES][0][CONF_ID] == "den"
     assert len(saved_data[CONF_SPACES][0][CONF_EMITTERS]) == 0
     assert len(saved_data[CONF_SPACES][0][CONF_PRESETS]) == 0
+
+
+def _get_schema_default(result: dict, key: str):
+    """Extract the default value for a key from a voluptuous data_schema."""
+    for schema_key in result["data_schema"].schema:
+        if schema_key == key:
+            return schema_key.default()
+    return None
+
+
+@pytest.mark.asyncio
+async def test_options_flow_back_defaults_after_leaf(hass: HomeAssistant) -> None:
+    """Test that returning from leaf steps pre-selects 'back' up the breadcrumb trail."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="HVAC Fusion",
+        data={
+            CONF_NAME: "HVAC Fusion",
+            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+            CONF_TARIFFS: {},
+            CONF_PRODUCERS: {
+                "hp1": {
+                    CONF_NAME: "Heat Pump 1",
+                    CONF_TYPE: "heat_pump",
+                    CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+                }
+            },
+            CONF_SPACES: [
+                {
+                    CONF_ID: "room1",
+                    CONF_NAME: "Room 1",
+                    CONF_TEMP_SENSOR: "sensor.room1_temp",
+                    CONF_FLOOR_AREA: 200.0,
+                    CONF_CEILING_HEIGHT: 8.0,
+                    CONF_PRIORITY: 5,
+                    CONF_SHARED_BOILER_ROLE: "independent",
+                    CONF_PRESETS: {},
+                    CONF_EMITTERS: [],
+                }
+            ],
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.hvac_fusion.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+        # Enter spaces_menu from init -> default is "add"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "spaces_menu"}
+        )
+        assert result["step_id"] == "spaces_menu"
+        assert _get_schema_default(result, "space_action") == "add"
+
+        # Select room1 -> default on space_manage is "edit"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"space_action": "room1"}
+        )
+        assert result["step_id"] == "space_manage"
+        assert _get_schema_default(result, "action") == "edit"
+
+        # Enter space_edit and submit -> returns to space_manage with default "back"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"action": "edit"}
+        )
+        assert result["step_id"] == "space_edit"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_NAME: "Room 1",
+                CONF_TEMP_SENSOR: "sensor.room1_temp",
+            },
+        )
+        assert result["step_id"] == "space_manage"
+        assert _get_schema_default(result, "action") == "back"
+
+        # Submitting space_manage with "back" returns to spaces_menu with default "back"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"action": "back"}
+        )
+        assert result["step_id"] == "spaces_menu"
+        assert _get_schema_default(result, "space_action") == "back"
+
+        # Submitting spaces_menu with "back" returns to main menu (init)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"space_action": "back"}
+        )
+        assert result["step_id"] == "init"
+
+        # Enter producers_menu from init -> default is "add"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "producers_menu"}
+        )
+        assert result["step_id"] == "producers_menu"
+        assert _get_schema_default(result, "producer_action") == "add"
+
+        # Cancel producer_add -> returns to producers_menu with default "back"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"producer_action": "add"}
+        )
+        assert result["step_id"] == "producer_add"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"cancel": True}
+        )
+        assert result["step_id"] == "producers_menu"
+        assert _get_schema_default(result, "producer_action") == "back"
+
+
+@pytest.mark.asyncio
+async def test_options_flow_advisory_only_emitters_without_entity_id(
+    hass: HomeAssistant,
+) -> None:
+    """Test configuring a space and emitters without controllable entity_ids."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="HVAC Fusion",
+        data={
+            CONF_NAME: "HVAC Fusion",
+            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+            CONF_TARIFFS: {},
+            CONF_PRODUCERS: {
+                "hp1": {
+                    CONF_NAME: "Heat Pump",
+                    CONF_TYPE: "heat_pump",
+                    CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+                },
+                "boiler1": {
+                    CONF_NAME: "Boiler",
+                    CONF_TYPE: "boiler",
+                    CONF_FUEL_TYPE: "natural_gas",
+                    CONF_PROFILE: "generic/modulating_condensing_boiler.json",
+                },
+            },
+            CONF_SPACES: [],
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.hvac_fusion.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+        # Create space with primary mini-split emitter lacking entity_id
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "spaces_menu"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"space_action": "add"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_NAME: "Living Room",
+                CONF_TEMP_SENSOR: "sensor.living_room_temp",
+                CONF_FLOOR_AREA: 400.0,
+                CONF_CEILING_HEIGHT: 9.0,
+                "configure_primary_emitter": True,
+                "emitter_type": "mini_split",
+                "hp_emitter_producer": "hp1",
+                "emitter_nominal_btu": 12000.0,
+            },
+        )
+        assert result["step_id"] == "space_manage"
+
+        # Add second emitter (hydronic) without entity_id
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"action": "emitters"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"emitter_action": "add"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_TYPE: "hydronic",
+                "boiler_emitter_producer": "boiler1",
+                CONF_ZONE_ID: "z1",
+            },
+        )
+        assert result["step_id"] == "emitters_menu"
+
+        # Edit the first emitter without supplying entity_id
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"emitter_action": "0"}
+        )
+        assert result["step_id"] == "emitter_edit"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_TYPE: "mini_split",
+                "hp_emitter_producer": "hp1",
+                CONF_OFFSET: 0.0,
+                CONF_NOMINAL_BTU: 15000.0,
+            },
+        )
+        assert result["step_id"] == "emitters_menu"
+
+        # Finish and verify emitters were saved without entity_id
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"emitter_action": "back"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"action": "back"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"space_action": "back"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "finish"}
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+
+        emitters = result["data"][CONF_SPACES][0][CONF_EMITTERS]
+        assert len(emitters) == 2
+        assert CONF_ENTITY_ID not in emitters[0]
+        assert emitters[0][CONF_NOMINAL_BTU] == 15000.0
+        assert CONF_ENTITY_ID not in emitters[1]
+        assert emitters[1][CONF_TYPE] == "hydronic"
