@@ -8,7 +8,6 @@ const AVAILABLE_SYSTEM_DIAGNOSTICS = [
   { key: 'control_enabled', label: 'Control Mode (Autonomous / Dry Run)' },
   { key: 'heat_pump', label: 'Primary Heat Pump ID' },
   { key: 'auxiliary_producer', label: 'Auxiliary Producer ID' },
-  { key: 'total_heat_loss_btu_per_hr', label: 'Total Heat Loss (BTU/h)' },
   { key: 'cumulative_estimated_cost', label: 'Cumulative Estimated Cost' }
 ];
 

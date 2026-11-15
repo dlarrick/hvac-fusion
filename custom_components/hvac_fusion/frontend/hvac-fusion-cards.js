@@ -4385,7 +4385,6 @@ const AVAILABLE_SYSTEM_DIAGNOSTICS = [
   { key: "control_enabled", label: "Control Mode (Autonomous / Dry Run)" },
   { key: "heat_pump", label: "Primary Heat Pump ID" },
   { key: "auxiliary_producer", label: "Auxiliary Producer ID" },
-  { key: "total_heat_loss_btu_per_hr", label: "Total Heat Loss (BTU/h)" },
   { key: "cumulative_estimated_cost", label: "Cumulative Estimated Cost" }
 ];
 let HvacFusionSystemEditor = class extends i {
@@ -4838,15 +4837,6 @@ let HvacFusionSystemCard = class extends i {
     }
     if (this.shouldShowAttribute("auxiliary_producer") && xoverAttrs.auxiliary_producer) {
       pills.push(pill("Auxiliary", String(xoverAttrs.auxiliary_producer)));
-    }
-    if (this.shouldShowAttribute("total_heat_loss_btu_per_hr")) {
-      const btu = rateAttrs.total_heat_loss_btu_per_hr;
-      pills.push(
-        pill(
-          "Heat Loss",
-          typeof btu === "number" ? `${Math.round(btu).toLocaleString()} BTU/h` : "N/A"
-        )
-      );
     }
     if (this.shouldShowAttribute("cumulative_estimated_cost")) {
       const cum = savingsAttrs.cumulative_estimated_cost ?? rateAttrs.cumulative_estimated_cost;

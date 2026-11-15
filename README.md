@@ -42,6 +42,10 @@ HVAC Fusion automatically bundles and serves two companion Lovelace cards for vi
 type: vertical-stack
 cards:
   # Native Thermostat Card for space temperature & mode control
+  # System-wide economics, producers, & diagnostics card
+  - type: custom:hvac-fusion-system-card
+    entity: sensor.hvac_fusion_economic_crossover_temperature
+
   - type: thermostat
     entity: climate.first_floor_space
 
@@ -69,13 +73,23 @@ An interactive 7-day vertical timeline calendar designed to visualize and edit n
 ### 2. `hvac-fusion-status-card` (Unified Space Status & Comfort Bump Card)
 A comprehensive companion card for living space dashboards bringing together 24-hour schedule awareness, intuitive temporary temperature adjustments, and live operational diagnostics.
 
-<img src="docs/images/hvac_fusion_status_card.png" alt="HVAC Fusion Status Card with Companion Thermostat" width="430">
+<img src="docs/images/hvac_fusion_status_card.jpg" alt="HVAC Fusion Status Card with Companion Thermostat" width="430">
 
 * **24-Hour Preset Timeline**: Displays today's scheduled comfort bounds and active preset mode with a live high-contrast "NOW" progress needle updating every 30 seconds.
 * **Temporary Comfort Bump**: Provides one-tap `🔥 Warmer (+2°)` and `❄️ Cooler (-2°)` adjustments that stack up to ±5°F and decay linearly back to the active schedule over 2 hours without mutating underlying schedule definitions.
 * **Space Details & Diagnostics**: An expandable accordion displaying real-time system phase (e.g. *Plateau Maintenance*, *Setback Recovery*), active producer, window interlock state, cycling emitter status, and coordinator explanation strings.
 * **Day Navigation**: Flip between days (`‹ Today ›`) to inspect upcoming schedule routines.
 * **Backwards Compatibility**: Seamlessly aliases the legacy `custom:climate-preset-timeline` card type.
+
+### 3. `hvac-fusion-system-card` (System Economics, Producers & Diagnostics Card)
+A whole-system summary card for your main dashboard showing real-time operating mode, crossover economics, live costs and savings, producer status, and configurable plant diagnostics.
+
+<img src="docs/images/hvac_fusion_system_card.png" alt="HVAC Fusion System Card" width="430">
+
+* **Mode & Plant Header**: Displays `Autonomous`, `Dry Run`, or `Advisory` status alongside the live economic crossover temperature, break-even COP (`COP*`), and total estimated space heat-loss load (`BTU/h`).
+* **Costs & Savings**: Shows the current optimized heating rate (`$/h`), live hourly and cumulative savings compared against fossil-fuel-only and heat-pump-only baselines, and side-by-side baseline rate pills.
+* **Producers**: Compact status cards for every configured producer (`Idle`, `Heating`, `Cooling`, `Locked Out`) with live telemetry (heat pump COP and mode lock, boiler return temperature, efficiency, and condensing state).
+* **System Details & Diagnostics**: Expandable drawer with visual-editor checkboxes for `system_phase`, `break_even_cop`, `control_enabled`, `heat_pump`, `auxiliary_producer`, and `cumulative_estimated_cost`.
 
 ### Schedule Edit Mutual Exclusion Locks
 When editing schedules in `schedule-preset-card`, clicking `[ ✎ Edit ]` invokes the `hvac_fusion.acquire_schedule_lock` service (setting a 300s TTL lock and exposing `schedule_editing: true` on the space's climate entity). This signals to external automations and tools that consult this lock to pause automated schedule adjustments while a human is actively making edits. When finished, clicking `[ ✓ Done ]` releases the lock. Both cards use progressive enhancement—if used standalone without HVAC Fusion, the cards operate cleanly without errors.

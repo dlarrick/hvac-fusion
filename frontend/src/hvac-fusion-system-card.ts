@@ -545,16 +545,6 @@ export class HvacFusionSystemCard extends LitElement {
       pills.push(pill('Auxiliary', String(xoverAttrs.auxiliary_producer)));
     }
 
-    if (this.shouldShowAttribute('total_heat_loss_btu_per_hr')) {
-      const btu = rateAttrs.total_heat_loss_btu_per_hr;
-      pills.push(
-        pill(
-          'Heat Loss',
-          typeof btu === 'number' ? `${Math.round(btu).toLocaleString()} BTU/h` : 'N/A'
-        )
-      );
-    }
-
     if (this.shouldShowAttribute('cumulative_estimated_cost')) {
       const cum = savingsAttrs.cumulative_estimated_cost ?? rateAttrs.cumulative_estimated_cost;
       if (cum !== undefined && cum !== null) {
