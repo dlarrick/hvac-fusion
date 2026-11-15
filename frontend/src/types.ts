@@ -91,6 +91,21 @@ export interface SystemCardConfig {
   diagnostic_attributes?: string[];
 }
 
+export const DEFAULT_STATUS_DIAGNOSTICS: readonly string[] = [
+  'phase',
+  'active_producer',
+  'economic_crossover_temp',
+  'explanation',
+  'window_open'
+];
+
+export const DEFAULT_SYSTEM_DIAGNOSTICS: readonly string[] = [
+  'system_phase',
+  'control_enabled',
+  'heat_pump',
+  'auxiliary_producer'
+];
+
 export interface InternalBlock {
   id: string;
   day: ScheduleDay;

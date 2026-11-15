@@ -618,6 +618,19 @@ const DAY_LABELS = {
   saturday: { short: "Sat", full: "Saturday" },
   sunday: { short: "Sun", full: "Sunday" }
 };
+const DEFAULT_STATUS_DIAGNOSTICS = [
+  "phase",
+  "active_producer",
+  "economic_crossover_temp",
+  "explanation",
+  "window_open"
+];
+const DEFAULT_SYSTEM_DIAGNOSTICS = [
+  "system_phase",
+  "control_enabled",
+  "heat_pump",
+  "auxiliary_producer"
+];
 function timeStringToMinutes(timeStr) {
   if (!timeStr) return 0;
   const parts = timeStr.split(":").map((p2) => parseInt(p2, 10));
@@ -3155,13 +3168,7 @@ const _HvacFusionStatusEditor = class _HvacFusionStatusEditor extends i {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: [
-        "phase",
-        "active_producer",
-        "economic_crossover_temp",
-        "explanation",
-        "window_open"
-      ],
+      diagnostic_attributes: [...DEFAULT_STATUS_DIAGNOSTICS],
       ...config,
       type: "custom:hvac-fusion-status-card"
     };
@@ -3181,16 +3188,10 @@ const _HvacFusionStatusEditor = class _HvacFusionStatusEditor extends i {
     );
   }
   _toggleDiagnosticAttribute(attrKey, checked) {
-    const current = this._config.diagnostic_attributes || [
-      "phase",
-      "active_producer",
-      "economic_crossover_temp",
-      "explanation",
-      "window_open"
-    ];
+    const current = this._config.diagnostic_attributes || DEFAULT_STATUS_DIAGNOSTICS;
     let next;
     if (checked) {
-      next = current.includes(attrKey) ? current : [...current, attrKey];
+      next = current.includes(attrKey) ? [...current] : [...current, attrKey];
     } else {
       next = current.filter((k2) => k2 !== attrKey);
     }
@@ -3200,13 +3201,7 @@ const _HvacFusionStatusEditor = class _HvacFusionStatusEditor extends i {
     var _a2;
     if (!this._config) return b``;
     const climateEntities = Object.keys(((_a2 = this.hass) == null ? void 0 : _a2.states) || {}).filter((entityId) => entityId.startsWith("climate.")).sort();
-    const selectedAttrs = this._config.diagnostic_attributes || [
-      "phase",
-      "active_producer",
-      "economic_crossover_temp",
-      "explanation",
-      "window_open"
-    ];
+    const selectedAttrs = this._config.diagnostic_attributes || DEFAULT_STATUS_DIAGNOSTICS;
     return b`
       <div class="editor-container">
         <!-- Target Climate Entity -->
@@ -3554,13 +3549,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: [
-        "phase",
-        "active_producer",
-        "economic_crossover_temp",
-        "explanation",
-        "window_open"
-      ]
+      diagnostic_attributes: [...DEFAULT_STATUS_DIAGNOSTICS]
     };
   }
   connectedCallback() {
@@ -3586,13 +3575,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
       show_boost: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: [
-        "phase",
-        "active_producer",
-        "economic_crossover_temp",
-        "explanation",
-        "window_open"
-      ],
+      diagnostic_attributes: [...DEFAULT_STATUS_DIAGNOSTICS],
       ...config
     };
     if (this.config.diagnostics_expanded_by_default) {
@@ -3857,13 +3840,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
     `;
   }
   shouldShowAttribute(attrKey) {
-    const list = this.config.diagnostic_attributes || [
-      "phase",
-      "active_producer",
-      "economic_crossover_temp",
-      "explanation",
-      "window_open"
-    ];
+    const list = this.config.diagnostic_attributes || DEFAULT_STATUS_DIAGNOSTICS;
     return list.includes(attrKey);
   }
   renderDiagnosticAttributes(attrs) {
@@ -4408,13 +4385,7 @@ let HvacFusionSystemEditor = class extends i {
     );
   }
   toggleDiagnosticAttr(key, checked) {
-    const current = this.config.diagnostic_attributes || [
-      "system_phase",
-      "break_even_cop",
-      "control_enabled",
-      "heat_pump",
-      "auxiliary_producer"
-    ];
+    const current = this.config.diagnostic_attributes || DEFAULT_SYSTEM_DIAGNOSTICS;
     const next = checked ? Array.from(/* @__PURE__ */ new Set([...current, key])) : current.filter((k2) => k2 !== key);
     this.updateConfig({ diagnostic_attributes: next });
   }
@@ -4423,13 +4394,7 @@ let HvacFusionSystemEditor = class extends i {
     const allSensors = this.getSensorEntities();
     const xoverSensors = this.getSensorEntities("economic_crossover_temperature");
     const primarySensors = xoverSensors.length > 0 ? xoverSensors : allSensors;
-    const selectedAttrs = this.config.diagnostic_attributes || [
-      "system_phase",
-      "break_even_cop",
-      "control_enabled",
-      "heat_pump",
-      "auxiliary_producer"
-    ];
+    const selectedAttrs = this.config.diagnostic_attributes || DEFAULT_SYSTEM_DIAGNOSTICS;
     return b`
       <div class="editor-container">
         <div class="field-group">
@@ -4633,13 +4598,7 @@ let HvacFusionSystemCard = class extends i {
       show_producers: true,
       show_diagnostics: true,
       diagnostics_expanded_by_default: false,
-      diagnostic_attributes: [
-        "system_phase",
-        "break_even_cop",
-        "control_enabled",
-        "heat_pump",
-        "auxiliary_producer"
-      ]
+      diagnostic_attributes: [...DEFAULT_SYSTEM_DIAGNOSTICS]
     };
   }
   setConfig(config) {
@@ -4750,13 +4709,7 @@ let HvacFusionSystemCard = class extends i {
     return formatted === "—" ? "—" : `${formatted}/h`;
   }
   shouldShowAttribute(attrKey) {
-    const list = this.config.diagnostic_attributes || [
-      "system_phase",
-      "break_even_cop",
-      "control_enabled",
-      "heat_pump",
-      "auxiliary_producer"
-    ];
+    const list = this.config.diagnostic_attributes || DEFAULT_SYSTEM_DIAGNOSTICS;
     return list.includes(attrKey);
   }
   renderProducerCard(entityId, stateObj) {
@@ -5108,6 +5061,9 @@ HvacFusionSystemCard.styles = i$3`
     }
 
     .kpi-tile {
+      display: grid;
+      grid-template-rows: 1fr auto auto;
+      align-items: center;
       background: rgba(15, 23, 42, 0.45);
       border: 1px solid rgba(255, 255, 255, 0.06);
       border-radius: 8px;
@@ -5361,6 +5317,8 @@ window.customCards.push({
 });
 export {
   DAYS_OF_WEEK,
-  DAY_LABELS
+  DAY_LABELS,
+  DEFAULT_STATUS_DIAGNOSTICS,
+  DEFAULT_SYSTEM_DIAGNOSTICS
 };
 //# sourceMappingURL=hvac-fusion-cards.js.map
