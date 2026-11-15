@@ -179,11 +179,8 @@ class HvacFusionEconomicCrossoverTemperatureSensor(HvacFusionSensorBase):
         attrs["break_even_cop"] = self.manager.break_even_cop
         attrs["system_phase"] = self.manager.system_phase
         attrs["control_enabled"] = self.manager.control_enabled
-        spaces = self.manager.topology.spaces if self.manager.topology else []
-        attrs["advisory_only"] = not any(
-            getattr(emitter, "entity_id", None)
-            for space in spaces
-            for emitter in getattr(space, "emitters", [])
+        attrs["advisory_only"] = not bool(
+            getattr(self.manager, "emitter_entity_map", None)
         )
         return attrs
 
