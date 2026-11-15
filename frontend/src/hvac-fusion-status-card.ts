@@ -333,12 +333,11 @@ export class HvacFusionStatusCard extends LitElement {
       position: absolute;
       top: 0;
       bottom: 0;
-      border-radius: 4px;
       overflow: hidden;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      padding: 0 4px;
+      padding: 1px;
       box-sizing: border-box;
       pointer-events: none;
     }
@@ -348,6 +347,18 @@ export class HvacFusionStatusCard extends LitElement {
       flex-direction: column;
       height: 100%;
       width: 100%;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-sizing: border-box;
+    }
+
+    .dual-band.side-by-side {
+      flex-direction: row;
+    }
+
+    .dual-band.side-by-side .band-half {
+      font-size: 0.75rem;
     }
 
     .band-half {
@@ -367,6 +378,10 @@ export class HvacFusionStatusCard extends LitElement {
       justify-content: center;
       font-size: 0.75rem;
       font-weight: 700;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-sizing: border-box;
     }
 
     .now-needle {
@@ -574,44 +589,36 @@ export class HvacFusionStatusCard extends LitElement {
       to { opacity: 1; transform: translateY(0); }
     }
 
-    .diag-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-      gap: 8px;
+    .diag-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
     }
 
-    .diag-card {
-      background: rgba(255, 255, 255, 0.03);
+    .diag-pill {
+      display: inline-flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 6px;
-      padding: 6px 8px;
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      padding: 4px 9px;
+      font-size: 0.76rem;
+      line-height: 1.3;
+      max-width: 100%;
+      box-sizing: border-box;
     }
 
     .diag-label {
-      font-size: 0.7rem;
-      font-weight: 600;
       color: var(--secondary-text-color, #94a3b8);
-      margin-bottom: 2px;
+      font-weight: 500;
     }
 
     .diag-value {
-      font-size: 0.82rem;
       font-weight: 600;
       color: var(--primary-text-color, #f1f5f9);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .diag-explanation {
-      font-size: 0.75rem;
-      font-style: italic;
-      color: var(--secondary-text-color, #cbd5e1);
-      background: rgba(255, 255, 255, 0.02);
-      border-left: 2px solid var(--primary-color, #38bdf8);
-      padding: 6px 10px;
-      border-radius: 0 4px 4px 0;
-      line-height: 1.35;
+      word-break: break-word;
     }
   `;
 
@@ -690,9 +697,10 @@ export class HvacFusionStatusCard extends LitElement {
                     const width = ((block.endMinutes - block.startMinutes) / 1440) * 100;
 
                     if (block.hvac_mode === 'heat_cool') {
+                      const isWide = block.endMinutes - block.startMinutes >= 180;
                       return html`
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
-                          <div class="dual-band">
+                          <div class="dual-band ${isWide ? 'side-by-side' : ''}">
                             <div class="band-half" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
                               ${block.cool_to}°
                             </div>
@@ -807,16 +815,9 @@ export class HvacFusionStatusCard extends LitElement {
                 ${this.diagnosticsExpanded
                   ? html`
                       <div class="diagnostics-drawer">
-                        <div class="diag-grid">
+                        <div class="diag-pills">
                           ${this.renderDiagnosticAttributes(stateObj?.attributes || {})}
                         </div>
-                        ${this.shouldShowAttribute('explanation') && stateObj?.attributes?.explanation
-                          ? html`
-                              <div class="diag-explanation">
-                                "${stateObj.attributes.explanation}"
-                              </div>
-                            `
-                          : ''}
                       </div>
                     `
                   : ''}
@@ -839,27 +840,22 @@ export class HvacFusionStatusCard extends LitElement {
   }
 
   private renderDiagnosticAttributes(attrs: Record<string, any>) {
-    const cards = [];
+    const pills = [];
+    const pill = (label: string, value: string, color?: string) => html`
+      <div class="diag-pill" title="${label}: ${value}">
+        <span class="diag-label">${label}:</span>
+        <span class="diag-value" style="${color ? `color: ${color};` : ''}">${value}</span>
+      </div>
+    `;
 
     if (this.shouldShowAttribute('phase')) {
       const rawPhase = attrs.phase || 'plateau_maintenance';
       const label = rawPhase.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
-      cards.push(html`
-        <div class="diag-card">
-          <div class="diag-label">System Phase</div>
-          <div class="diag-value" title="${label}">${label}</div>
-        </div>
-      `);
+      pills.push(pill('System Phase', label));
     }
 
     if (this.shouldShowAttribute('active_producer')) {
-      const prod = attrs.active_producer || 'None (Idle)';
-      cards.push(html`
-        <div class="diag-card">
-          <div class="diag-label">Active Producer</div>
-          <div class="diag-value" title="${prod}">${prod}</div>
-        </div>
-      `);
+      pills.push(pill('Active Producer', attrs.active_producer || 'None (Idle)'));
     }
 
     if (this.shouldShowAttribute('economic_crossover_temp')) {
@@ -868,59 +864,39 @@ export class HvacFusionStatusCard extends LitElement {
         typeof xover === 'number' && !Number.isNaN(xover)
           ? `${xover.toFixed(1)} °F`
           : 'N/A';
-      cards.push(html`
-        <div class="diag-card">
-          <div class="diag-label">Economic Crossover</div>
-          <div class="diag-value" title="${label}">${label}</div>
-        </div>
-      `);
+      pills.push(pill('Economic Crossover', label));
     }
 
     if (this.shouldShowAttribute('window_open')) {
       const isOpen = Boolean(attrs.window_open);
-      cards.push(html`
-        <div class="diag-card">
-          <div class="diag-label">Window Interlock</div>
-          <div class="diag-value" style="color: ${isOpen ? '#f87171' : '#34d399'};">
-            ${isOpen ? '⚠️ Open (Paused)' : 'Closed'}
-          </div>
-        </div>
-      `);
+      pills.push(
+        pill(
+          'Window Interlock',
+          isOpen ? '⚠️ Open (Paused)' : 'Closed',
+          isOpen ? '#f87171' : '#34d399'
+        )
+      );
+    }
+
+    if (this.shouldShowAttribute('explanation') && attrs.explanation) {
+      pills.push(pill('Explanation', String(attrs.explanation)));
     }
 
     if (this.shouldShowAttribute('active_delivery_units')) {
       const units = attrs.active_delivery_units || [];
-      const label = units.length > 0 ? units.join(', ') : 'None';
-      cards.push(html`
-        <div class="diag-card">
-          <div class="diag-label">Delivery Units</div>
-          <div class="diag-value" title="${label}">${label}</div>
-        </div>
-      `);
+      pills.push(pill('Delivery Units', units.length > 0 ? units.join(', ') : 'None'));
     }
 
     if (this.shouldShowAttribute('cycling_emitters')) {
       const cycling = attrs.cycling_emitters || [];
-      const label = cycling.length > 0 ? cycling.join(', ') : 'None';
-      cards.push(html`
-        <div class="diag-card">
-          <div class="diag-label">Cycling Emitters</div>
-          <div class="diag-value" title="${label}">${label}</div>
-        </div>
-      `);
+      pills.push(pill('Cycling Emitters', cycling.length > 0 ? cycling.join(', ') : 'None'));
     }
 
     if (this.shouldShowAttribute('in_recovery')) {
-      const inRec = Boolean(attrs.in_recovery);
-      cards.push(html`
-        <div class="diag-card">
-          <div class="diag-label">Recovery State</div>
-          <div class="diag-value">${inRec ? 'In Recovery' : 'Normal'}</div>
-        </div>
-      `);
+      pills.push(pill('Recovery State', Boolean(attrs.in_recovery) ? 'In Recovery' : 'Normal'));
     }
 
-    return cards;
+    return pills;
   }
 }
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv
@@ -38,6 +38,7 @@ from hvac_crossover import (
     FurnaceRegister,
     HvacMode,
     HydronicEmitter,
+    InverterHeatPumpProducer,
     MiniSplitHead,
     ModulatingBoilerProducer,
     ProducerProfileFactory,
@@ -104,9 +105,9 @@ PLATFORMS = [Platform.CLIMATE, Platform.SENSOR]
 
 EMITTER_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_TYPE): vol.In(["mini_split", "hydronic"]),
+        vol.Required(CONF_TYPE): vol.In(["mini_split", "hydronic", "furnace"]),
         vol.Required(CONF_PRODUCER): cv.string,
-        vol.Required(CONF_ENTITY_ID): cv.entity_id,
+        vol.Optional(CONF_ENTITY_ID): vol.Any(cv.entity_id, None),
         vol.Optional(CONF_NOMINAL_BTU, default=12000.0): vol.Coerce(float),
         vol.Optional(CONF_ZONE_ID, default="z1"): cv.string,
         vol.Optional(CONF_OFFSET, default=0.0): vol.Coerce(float),
@@ -253,6 +254,21 @@ class HvacFusionManager:
                 self.schedule_entities.add(sched_id)
 
         self._schedule_locks: dict[str, float] = {}
+
+        self.cost_estimates: dict[str, float | None] = {
+            "chosen_cost_per_hr": None,
+            "fossil_fuel_baseline_cost_per_hr": None,
+            "heat_pump_baseline_cost_per_hr": None,
+            "savings_vs_fossil_fuel_per_hr": None,
+            "savings_vs_heat_pump_per_hr": None,
+            "total_heat_loss_btu_per_hr": None,
+        }
+        self.cumulative_estimated_cost: float = 0.0
+        self.cumulative_fossil_fuel_baseline_cost: float = 0.0
+        self.cumulative_heat_pump_baseline_cost: float = 0.0
+        self.cumulative_savings_vs_fossil_fuel: float = 0.0
+        self.cumulative_savings_vs_heat_pump: float = 0.0
+        self._last_cost_eval_utc: datetime | None = None
 
     @property
     def spaces_config(self) -> list[dict[str, Any]]:
@@ -557,10 +573,11 @@ class HvacFusionManager:
             for idx, e_conf in enumerate(s_conf[CONF_EMITTERS]):
                 e_type = e_conf[CONF_TYPE]
                 p_id = e_conf[CONF_PRODUCER]
-                e_entity = e_conf[CONF_ENTITY_ID]
+                e_entity = e_conf.get(CONF_ENTITY_ID)
                 e_id = f"{s_id}_{p_id}_{idx}"
 
-                self.emitter_entity_map[e_id] = e_entity
+                if e_entity:
+                    self.emitter_entity_map[e_id] = e_entity
                 self.emitter_types[e_id] = e_type
                 self.emitter_offsets[e_id] = float(e_conf.get(CONF_OFFSET, 0.0))
 
@@ -753,6 +770,160 @@ class HvacFusionManager:
                     pass
         return 35.0
 
+    def _update_cost_estimates(
+        self,
+        plan: Any,
+        outdoor_temp: float,
+        space_conditions: dict[str, SpaceCondition],
+    ) -> None:
+        """Compute instantaneous $/hr heating cost and baseline savings, and integrate totals."""
+        if not self.topology or not self.coordinator or not self.tariffs:
+            return
+        if not self.topology.spaces:
+            return
+
+        total_heat_loss_btu = 0.0
+        total_chosen_hr = 0.0
+        has_chosen = False
+        total_boiler_hr = 0.0
+        total_chosen_with_boiler = 0.0
+        has_boiler_baseline = False
+        total_hp_hr = 0.0
+        total_chosen_with_hp = 0.0
+        has_hp_baseline = False
+
+        safety_band = self.coordinator.config.heat_pump_min_temp_safety_band_f
+
+        for space in self.topology.spaces:
+            cond = space_conditions.get(space.id)
+            if cond is None or cond.window_open or cond.comfort.heat_to is None:
+                continue
+
+            entity = self.space_entities.get(space.id)
+            if entity is not None and getattr(entity, "hvac_mode", None) in (
+                "off",
+                "cool",
+            ):
+                continue
+
+            load_btu = space.estimated_heat_loss_btu_per_hr(
+                cond.comfort.heat_to, outdoor_temp
+            )
+            if load_btu <= 0.0:
+                continue
+            total_heat_loss_btu += load_btu
+            mmbtu_hr = load_btu / 1_000_000.0
+
+            hp_costs: list[float] = []
+            fuel_costs: list[float] = []
+            unit_costs: dict[str, float] = {}
+            has_hp_emitter = False
+
+            for emitter in space.emitters:
+                producer = self.topology.get_producer(emitter.producer_id)
+                if producer is None:
+                    continue
+                if isinstance(producer, InverterHeatPumpProducer):
+                    has_hp_emitter = True
+                try:
+                    cost_mmbtu, _ = (
+                        self.coordinator.economics.evaluate_delivery_unit_cost(
+                            delivery_unit=emitter,
+                            outdoor_temp_f=outdoor_temp,
+                            tariffs=self.tariffs,
+                            topology=self.topology,
+                            load_btu=load_btu,
+                            part_load=True,
+                            safety_band_f=safety_band,
+                        )
+                    )
+                except (ZeroDivisionError, ValueError, TypeError):
+                    continue
+                if cost_mmbtu == float("inf") or cost_mmbtu < 0:
+                    continue
+                unit_costs[emitter.id] = cost_mmbtu
+                if isinstance(producer, InverterHeatPumpProducer):
+                    hp_costs.append(cost_mmbtu)
+                else:
+                    fuel_costs.append(cost_mmbtu)
+
+            # When a space has an HP emitter that is locked out by low ambient,
+            # the pure-HP baseline falls back to COP=1.0 electric resistance heat.
+            if has_hp_emitter and not hp_costs:
+                elec_rate = self.tariffs.marginal_electric_cost(0.0)
+                if elec_rate > 0:
+                    hp_costs.append(elec_rate / 0.0034121416)
+
+            if not unit_costs:
+                continue
+
+            s_dir = plan.space_directives.get(space.id) if plan else None
+            active_costs = [
+                unit_costs[e_id]
+                for e_id in (s_dir.active_delivery_unit_ids if s_dir else [])
+                if e_id in unit_costs
+            ]
+            chosen_mmbtu = (
+                min(active_costs) if active_costs else min(unit_costs.values())
+            )
+            chosen_hr = mmbtu_hr * chosen_mmbtu
+            total_chosen_hr += chosen_hr
+            has_chosen = True
+
+            if fuel_costs:
+                total_boiler_hr += mmbtu_hr * min(fuel_costs)
+                total_chosen_with_boiler += chosen_hr
+                has_boiler_baseline = True
+
+            if hp_costs:
+                total_hp_hr += mmbtu_hr * min(hp_costs)
+                total_chosen_with_hp += chosen_hr
+                has_hp_baseline = True
+
+        savings_boiler_hr = (
+            (total_boiler_hr - total_chosen_with_boiler)
+            if has_boiler_baseline
+            else None
+        )
+        savings_hp_hr = (
+            (total_hp_hr - total_chosen_with_hp) if has_hp_baseline else None
+        )
+
+        self.cost_estimates = {
+            "chosen_cost_per_hr": round(total_chosen_hr, 4) if has_chosen else None,
+            "fossil_fuel_baseline_cost_per_hr": (
+                round(total_boiler_hr, 4) if has_boiler_baseline else None
+            ),
+            "heat_pump_baseline_cost_per_hr": (
+                round(total_hp_hr, 4) if has_hp_baseline else None
+            ),
+            "savings_vs_fossil_fuel_per_hr": (
+                round(savings_boiler_hr, 4) if savings_boiler_hr is not None else None
+            ),
+            "savings_vs_heat_pump_per_hr": (
+                round(savings_hp_hr, 4) if savings_hp_hr is not None else None
+            ),
+            "total_heat_loss_btu_per_hr": round(total_heat_loss_btu, 1),
+        }
+
+        now_utc = datetime.now(UTC)
+        if self._last_cost_eval_utc is not None:
+            dt_hours = min(
+                1.0,
+                max(0.0, (now_utc - self._last_cost_eval_utc).total_seconds() / 3600.0),
+            )
+            if has_chosen:
+                self.cumulative_estimated_cost += total_chosen_hr * dt_hours
+            if has_boiler_baseline:
+                self.cumulative_fossil_fuel_baseline_cost += total_boiler_hr * dt_hours
+            if has_hp_baseline:
+                self.cumulative_heat_pump_baseline_cost += total_hp_hr * dt_hours
+            if savings_boiler_hr is not None:
+                self.cumulative_savings_vs_fossil_fuel += savings_boiler_hr * dt_hours
+            if savings_hp_hr is not None:
+                self.cumulative_savings_vs_heat_pump += savings_hp_hr * dt_hours
+        self._last_cost_eval_utc = now_utc
+
     async def async_evaluate(self, now: Any | None = None) -> None:
         """Runs the coordination cycle and dispatches commands to physical thermostats."""
         outdoor_temp = self.get_outdoor_temp()
@@ -799,6 +970,8 @@ class HvacFusionManager:
             )
             return
 
+        self._update_cost_estimates(plan, outdoor_temp, space_conditions)
+
         _LOGGER.debug(
             "Evaluate, outdoor %s, conditions %s, plan %s",
             str(outdoor_temp),
@@ -836,7 +1009,9 @@ class HvacFusionManager:
         for e_id, e_type in self.emitter_types.items():
             if e_type != "hydronic":
                 continue
-            entity_id = self.emitter_entity_map[e_id]
+            entity_id = self.emitter_entity_map.get(e_id)
+            if not entity_id:
+                continue
             zone_id = self.emitter_zones.get(e_id, "z1")
             state = self.hass.states.get(entity_id)
 
@@ -1066,7 +1241,9 @@ class HvacFusionManager:
             for e_id, e_type in self.emitter_types.items():
                 if e_type != "mini_split" or not e_id.startswith(f"{s_id}_"):
                     continue
-                entity_id = self.emitter_entity_map[e_id]
+                entity_id = self.emitter_entity_map.get(e_id)
+                if not entity_id:
+                    continue
                 state = self.hass.states.get(entity_id)
 
                 if (

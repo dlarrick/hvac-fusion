@@ -5,10 +5,12 @@
  * 1. schedule-preset-card: 7-day interactive schedule calendar editor
  * 2. hvac-fusion-status-card: Unified space status card (24h schedule, comfort bump, diagnostics)
  *    (aliases legacy custom:climate-preset-timeline)
+ * 3. hvac-fusion-system-card: Coordinator-level system card (crossover, costs & savings, producers)
  */
 
 import './schedule-preset-card';
 import './hvac-fusion-status-card';
+import './hvac-fusion-system-card';
 
 export * from './types';
 
@@ -67,6 +69,30 @@ export * from './types';
             entity: entityId
           }
         ]
+      }
+    };
+  }
+});
+
+// 3. System-Level Coordinator Card
+(window as any).customCards.push({
+  type: 'hvac-fusion-system-card',
+  name: 'HVAC Fusion System Card',
+  description:
+    'System-level overview with economic crossover, cost & baseline savings, producer states, and diagnostics.',
+  preview: true,
+  getEntitySuggestion: (hass: any, entityId: string) => {
+    const state = hass?.states?.[entityId];
+    if (
+      !entityId.startsWith('sensor.') ||
+      state?.attributes?.break_even_cop === undefined
+    ) {
+      return null;
+    }
+    return {
+      config: {
+        type: 'custom:hvac-fusion-system-card',
+        entity: entityId
       }
     };
   }

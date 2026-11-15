@@ -114,6 +114,17 @@ With this configuration HVAC Fusion provides advisory and equipment entities:
 - **Economic crossover temperature** -- outdoor break-even temperature where heat pump and boiler match costs (with `break_even_cop` as an attribute).
 - **Producer status sensors** -- operational state (`idle`, `heating`, `cooling`, `locked_out`) and telemetry (current COP, derate, fuel rate, boiler return temp, efficiency, condensing state) for each configured unit.
 
+### Space-Aware Advisory (Dumb Thermostats / Non-Connected Equipment)
+
+Even if your boiler uses a dumb wall thermostat or your mini-split has no Wi-Fi integration, you can still go beyond the producer-only baseline by defining **Spaces** and **Emitters** without a controllable `entity_id`:
+
+1. **Add a Space** under **Manage Spaces**: enter its room temperature sensor, floor area, ceiling height, and insulation/envelope score.
+2. **Attach Emitters** to the space (mini-split head capacity, hydronic emitter type such as baseboard vs. radiant floor, etc.) and **leave the Physical Actuation Entity blank**.
+
+With this in place, HVAC Fusion models your space's actual heat-loss load, boiler short-cycling and return-water temperature derates, and mini-split line-loss derates—producing a much more rigorous **space-aware economic crossover temperature** (both per-space and UA-weighted across spaces) while safely skipping hardware actuation for any emitter without an entity.
+
+> **Important:** Even in Advisory or Dry Run mode, each virtual Space climate entity (`climate.<space_id>_space`) must be turned on (`heat` or `heat_cool`, or an active `on` schedule block) with a heating setpoint (`heat_to`) above the outdoor temperature. If the Space climate entity or its active schedule is `off`, heat loss (`BTU/h`) and `$/hr` cost/savings estimates will remain `0` / unavailable.
+
 ### Full Configuration
 
 If you do have smart thermostats and connected mini-splits, HVAC Fusion can do much more. Use the Configuration to define your Spaces and Emitters as described above. HVAC Fusion will create a new virtual thermostat for each space. Use these in your dashboards instead of the underlying per-emitter thermostats.
@@ -161,7 +172,7 @@ This space has one hydronic zone for the whole floor, and each bedroom has its o
 
 ### Dry Run Mode
 
-Maybe you're not comfortable turning this all on at once. There is a dry-run mode (enabled by default) where HVAC Fusion doesn't actually control the individual emitter thermostats, but just shows what it would have done (indicated by `control_enabled: false` on the crossover sensor).
+Maybe you're not comfortable turning this all on at once. There is a dry-run mode (enabled by default) where HVAC Fusion doesn't actually control the individual emitter thermostats, but just shows what it would have done (indicated by `control_enabled: false` on the crossover sensor). Note that your virtual Space climate entities (`climate.<space_id>_space`) still need to be in `heat` or `heat_cool` mode (not `off`) so HVAC Fusion knows your target comfort bounds when simulating load, costs, and savings.
 
 ## Entities & Attributes
 

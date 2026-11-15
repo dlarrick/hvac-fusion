@@ -1,30 +1,42 @@
 """Tests for HVAC Fusion diagnostic sensors."""
 
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from custom_components.hvac_fusion import (
     DOMAIN,
     HvacFusionManager,
 )
 from custom_components.hvac_fusion.const import (
+    CONF_CONTROL_ENABLED,
     CONF_ELECTRIC_COST_PER_KWH,
+    CONF_EMITTERS,
     CONF_FUEL_TYPE,
     CONF_GAS_COST_PER_THERM,
     CONF_NOMINAL_BTU,
     CONF_OUTDOOR_TEMPERATURE_ENTITY,
+    CONF_PRODUCER,
     CONF_PRODUCERS,
     CONF_PROFILE,
     CONF_PROPANE_COST_PER_GAL,
+    CONF_SPACES,
     CONF_TARIFFS,
+    CONF_TEMP_SENSOR,
     CONF_TYPE,
 )
 from custom_components.hvac_fusion.sensor import (
     HvacFusionEconomicCrossoverTemperatureSensor,
+    HvacFusionEstimatedCostRateSensor,
+    HvacFusionEstimatedSavingsSensor,
     HvacFusionProducerSensor,
+    _build_cost_sensors,
 )
 from homeassistant.const import (
+    CONF_ID,
     CONF_NAME,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from pytest_homeassistant.common import MockConfigEntry
 
 
@@ -191,6 +203,10 @@ async def test_sensor_immediate_update_on_options_flow_reload(
     entry.add_to_hass(hass)
 
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    manager = hass.data[DOMAIN][entry.entry_id]
+    await manager.async_evaluate()
     await hass.async_block_till_done()
 
     # Initially unknown because no producers or tariffs configured
@@ -442,3 +458,233 @@ async def test_producer_sensor_active_delivery_units_no_cross_contamination(
     boiler_attrs = boiler_sensor.extra_state_attributes
     assert boiler_attrs["active_spaces"] == ["bedroom"]
     assert boiler_attrs["active_delivery_units"] == ["bedroom_boiler_1"]
+
+
+@pytest.mark.asyncio
+async def test_cost_matrix_estimates_and_sensors(hass: HomeAssistant) -> None:
+    """Test hourly cost/savings matrix, HP lockout resistive fallback, and sensor defaults."""
+    hass.states.async_set("sensor.outdoor_temp", "45.0")
+    hass.states.async_set("sensor.room_temp", "67.0")
+
+    conf = {
+        CONF_NAME: "HVAC Fusion",
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {
+            CONF_ELECTRIC_COST_PER_KWH: 0.20,
+            CONF_GAS_COST_PER_THERM: 2.00,
+        },
+        CONF_PRODUCERS: {
+            "hp": {
+                CONF_NAME: "Heat Pump",
+                CONF_TYPE: "heat_pump",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+            },
+            "boiler": {
+                CONF_NAME: "Boiler",
+                CONF_TYPE: "boiler",
+                CONF_FUEL_TYPE: "natural_gas",
+                CONF_PROFILE: "generic/modulating_condensing_boiler.json",
+            },
+        },
+        CONF_SPACES: [
+            {
+                CONF_ID: "living_room",
+                CONF_NAME: "Living Room",
+                CONF_TEMP_SENSOR: "sensor.room_temp",
+                "floor_area_sqft": 400.0,
+                "ceiling_height_ft": 8.0,
+                "envelope_score": 5,
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp",
+                        CONF_NOMINAL_BTU: 12000.0,
+                    },
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "boiler",
+                    },
+                ],
+            }
+        ],
+    }
+
+    manager = HvacFusionManager(hass, conf, entry_id="test_entry")
+    await manager.async_init()
+
+    # Build cost sensors and verify enabled-by-default vs opt-in matrix
+    sensors = _build_cost_sensors(manager)
+    assert len(sensors) == 8
+    enabled_default = [s for s in sensors if s.entity_registry_enabled_default]
+    disabled_default = [s for s in sensors if not s.entity_registry_enabled_default]
+    assert len(enabled_default) == 2
+    assert len(disabled_default) == 6
+
+    # Evaluate at mild temp (45°F): HP should be cheaper than gas boiler
+    await manager.async_evaluate()
+    est = manager.cost_estimates
+    assert est["chosen_cost_per_hr"] is not None
+    assert est["fossil_fuel_baseline_cost_per_hr"] is not None
+    assert est["heat_pump_baseline_cost_per_hr"] is not None
+    assert est["savings_vs_fossil_fuel_per_hr"] > 0.0
+    assert est["total_heat_loss_btu_per_hr"] > 0.0
+
+    # Simulate 30 minutes elapsed and evaluate at extreme cold (-30°F) where HP locks out
+    manager._last_cost_eval_utc = datetime.now(timezone.utc) - timedelta(minutes=30)
+    hass.states.async_set("sensor.outdoor_temp", "-30.0")
+    await manager.async_evaluate()
+
+    est_cold = manager.cost_estimates
+    # At -30°F HP locks out: chosen uses boiler, HP baseline falls back to COP=1 resistive
+    assert est_cold["heat_pump_baseline_cost_per_hr"] is not None
+    assert est_cold["heat_pump_baseline_cost_per_hr"] > est_cold["chosen_cost_per_hr"]
+    assert est_cold["savings_vs_heat_pump_per_hr"] > 0.0
+    assert manager.cumulative_estimated_cost > 0.0
+    assert manager.cumulative_heat_pump_baseline_cost > 0.0
+
+    rate_sensor = next(
+        s for s in sensors if isinstance(s, HvacFusionEstimatedCostRateSensor)
+    )
+    assert rate_sensor.native_value == est_cold["chosen_cost_per_hr"]
+    assert (
+        rate_sensor.extra_state_attributes["heat_pump_baseline_cost_per_hr"]
+        == est_cold["heat_pump_baseline_cost_per_hr"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_estimated_savings_sensor_restore(hass: HomeAssistant) -> None:
+    """Test HvacFusionEstimatedSavingsSensor restores cumulative totals on startup."""
+    manager = MagicMock(spec=HvacFusionManager)
+    manager.entry_id = "test_entry"
+    manager.conf = {CONF_NAME: "HVAC Fusion"}
+    manager.cost_estimates = {
+        "savings_vs_fossil_fuel_per_hr": 0.15,
+        "savings_vs_heat_pump_per_hr": 0.0,
+    }
+    manager.cumulative_savings_vs_fossil_fuel = 0.0
+    manager.cumulative_savings_vs_heat_pump = 0.0
+    manager.cumulative_estimated_cost = 0.0
+    manager.cumulative_fossil_fuel_baseline_cost = 0.0
+    manager.cumulative_heat_pump_baseline_cost = 0.0
+    manager.register_sensor_entity = MagicMock()
+
+    sensor = HvacFusionEstimatedSavingsSensor(manager)
+    sensor.hass = hass
+    sensor.async_write_ha_state = MagicMock()
+
+    last_state = State(
+        "sensor.hvac_fusion_estimated_savings_vs_fossil_fuel",
+        "12.34",
+        attributes={
+            "savings_vs_heat_pump_total": 5.67,
+            "cumulative_estimated_cost": 45.67,
+            "cumulative_fossil_fuel_baseline_cost": 58.01,
+            "cumulative_heat_pump_baseline_cost": 51.34,
+        },
+    )
+    sensor.async_get_last_state = AsyncMock(return_value=last_state)
+
+    await sensor.async_added_to_hass()
+
+    assert manager.cumulative_savings_vs_fossil_fuel == 12.34
+    assert manager.cumulative_savings_vs_heat_pump == 5.67
+    assert manager.cumulative_estimated_cost == 45.67
+    assert manager.cumulative_fossil_fuel_baseline_cost == 58.01
+    assert manager.cumulative_heat_pump_baseline_cost == 51.34
+    assert sensor.native_value == 12.34
+
+
+@pytest.mark.asyncio
+async def test_advisory_only_dry_run_all_sensors_populated(hass: HomeAssistant) -> None:
+    """Test no-entity (advisory-only) dry-run setup populates crossover, cost, savings, and producer sensors."""
+    hass.states.async_set("sensor.outdoor_temp", "32.0")
+    hass.states.async_set("sensor.living_room_temp", "68.0")
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Dry Run Coordinator",
+        data={
+            CONF_CONTROL_ENABLED: False,
+            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+            CONF_TARIFFS: {
+                CONF_ELECTRIC_COST_PER_KWH: 0.25,
+                CONF_GAS_COST_PER_THERM: 1.88,
+            },
+            CONF_PRODUCERS: {
+                "hp": {
+                    CONF_NAME: "Heat Pump",
+                    CONF_TYPE: "heat_pump",
+                    CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+                },
+                "boiler": {
+                    CONF_NAME: "Boiler",
+                    CONF_TYPE: "boiler",
+                    CONF_FUEL_TYPE: "natural_gas",
+                    CONF_PROFILE: "generic/modulating_condensing_boiler.json",
+                },
+            },
+            CONF_SPACES: [
+                {
+                    CONF_ID: "living_room",
+                    CONF_NAME: "Living Room",
+                    CONF_TEMP_SENSOR: "sensor.living_room_temp",
+                    "floor_area_sqft": 400.0,
+                    "ceiling_height_ft": 8.0,
+                    "envelope_score": 5,
+                    CONF_EMITTERS: [
+                        {
+                            CONF_ID: "lr_hp",
+                            CONF_NAME: "LR Mini Split",
+                            CONF_TYPE: "mini_split",
+                            CONF_PRODUCER: "hp",
+                            CONF_NOMINAL_BTU: 18000,
+                        },
+                        {
+                            CONF_ID: "lr_rad",
+                            CONF_NAME: "LR Radiator",
+                            CONF_TYPE: "hydronic",
+                            CONF_PRODUCER: "boiler",
+                            CONF_NOMINAL_BTU: 15000,
+                        },
+                    ],
+                }
+            ],
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    manager = hass.data[DOMAIN][entry.entry_id]
+    await manager.async_evaluate()
+    await hass.async_block_till_done()
+
+    xover_state = hass.states.get("sensor.hvac_fusion_economic_crossover_temperature")
+    assert xover_state is not None
+    assert xover_state.state not in ("unknown", "unavailable")
+    assert xover_state.attributes["control_enabled"] is False
+    assert xover_state.attributes["advisory_only"] is True
+    assert xover_state.attributes["break_even_cop"] is not None
+
+    cost_state = hass.states.get("sensor.hvac_fusion_estimated_heating_cost_rate")
+    assert cost_state is not None
+    assert cost_state.state not in ("unknown", "unavailable")
+    assert float(cost_state.state) > 0
+    assert cost_state.attributes["total_heat_loss_btu_per_hr"] > 0
+    assert cost_state.attributes["fossil_fuel_baseline_cost_per_hr"] is not None
+    assert cost_state.attributes["heat_pump_baseline_cost_per_hr"] is not None
+
+    savings_state = hass.states.get(
+        "sensor.hvac_fusion_estimated_savings_vs_fossil_fuel"
+    )
+    assert savings_state is not None
+    assert savings_state.state not in ("unknown", "unavailable")
+
+    assert hass.states.get("sensor.hvac_fusion_heat_pump") is not None
+    assert hass.states.get("sensor.hvac_fusion_boiler") is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

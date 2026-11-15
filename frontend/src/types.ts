@@ -77,6 +77,20 @@ export interface StatusCardConfig extends CardConfig {
   diagnostic_attributes?: string[];
 }
 
+export interface SystemCardConfig {
+  type: string;
+  entity: string; // Primary economic_crossover_temperature sensor
+  title?: string;
+  cost_rate_entity?: string;
+  savings_entity?: string;
+  producer_entities?: string[];
+  show_costs?: boolean;
+  show_producers?: boolean;
+  show_diagnostics?: boolean;
+  diagnostics_expanded_by_default?: boolean;
+  diagnostic_attributes?: string[];
+}
+
 export interface InternalBlock {
   id: string;
   day: ScheduleDay;

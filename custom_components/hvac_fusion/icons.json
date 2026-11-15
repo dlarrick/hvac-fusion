@@ -6,6 +6,30 @@
       },
       "break_even_cop": {
         "default": "mdi:scale-balance"
+      },
+      "estimated_heating_cost_rate": {
+        "default": "mdi:currency-usd"
+      },
+      "estimated_savings_vs_fossil_fuel": {
+        "default": "mdi:piggy-bank-outline"
+      },
+      "estimated_savings_vs_heat_pump": {
+        "default": "mdi:piggy-bank-outline"
+      },
+      "estimated_heating_cost": {
+        "default": "mdi:cash-multiple"
+      },
+      "estimated_fossil_fuel_baseline_cost": {
+        "default": "mdi:fire"
+      },
+      "estimated_heat_pump_baseline_cost": {
+        "default": "mdi:heat-pump"
+      },
+      "estimated_fossil_fuel_baseline_cost_rate": {
+        "default": "mdi:fire"
+      },
+      "estimated_heat_pump_baseline_cost_rate": {
+        "default": "mdi:heat-pump"
       }
     }
   }

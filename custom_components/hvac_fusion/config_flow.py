@@ -746,7 +746,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         )
 
     async def async_step_producers_menu(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None,
+        default_action: str = "add",
     ) -> config_entries.ConfigFlowResult:
         """Show producers list or action menu."""
         if user_input is not None:
@@ -767,7 +769,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         schema = vol.Schema(
             {
-                vol.Required("producer_action", default="add"): selector.SelectSelector(
+                vol.Required(
+                    "producer_action", default=default_action
+                ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=options,
                         mode=selector.SelectSelectorMode.LIST,
@@ -790,7 +794,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         errors: dict[str, str] = {}
         if user_input is not None:
             if user_input.get("cancel"):
-                return await self.async_step_producers_menu()
+                return await self.async_step_producers_menu(default_action="back")
 
             name = (
                 user_input.get(CONF_NAME, "").strip()
@@ -873,7 +877,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                             user_input.get(CONF_HAS_OUTDOOR_RESET, False)
                         )
                     self._options.setdefault(CONF_PRODUCERS, {})[p_id] = producer_entry
-                    return await self.async_step_producers_menu()
+                    return await self.async_step_producers_menu(default_action="back")
 
         hp_profiles = await async_get_available_producer_profiles(
             self.hass, category="heat_pump"
@@ -1038,7 +1042,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         if user_input is not None:
             if user_input.get("cancel"):
-                return await self.async_step_producers_menu()
+                return await self.async_step_producers_menu(default_action="back")
 
             if user_input.get("delete_producer"):
                 self._options.get(CONF_PRODUCERS, {}).pop(p_id, None)
@@ -1048,7 +1052,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         for e in sp.get(CONF_EMITTERS, [])
                         if e.get(CONF_PRODUCER) != p_id
                     ]
-                return await self.async_step_producers_menu()
+                return await self.async_step_producers_menu(default_action="back")
 
             p_type = user_input[CONF_TYPE]
             if p_type in ("heat_pump", "inverter_heat_pump"):
@@ -1103,7 +1107,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             else:
                 p_conf.pop(CONF_HAS_OUTDOOR_RESET, None)
 
-            return await self.async_step_producers_menu()
+            return await self.async_step_producers_menu(default_action="back")
 
         hp_profiles = await async_get_available_producer_profiles(
             self.hass, category="heat_pump"
@@ -1318,7 +1322,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         return await self.async_step_producer_edit(user_input)
 
     async def async_step_spaces_menu(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None,
+        default_action: str = "add",
     ) -> config_entries.ConfigFlowResult:
         """Show spaces list or action menu."""
         if user_input is not None:
@@ -1340,7 +1346,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         schema = vol.Schema(
             {
-                vol.Required("space_action", default="add"): selector.SelectSelector(
+                vol.Required(
+                    "space_action", default=default_action
+                ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=options,
                         mode=selector.SelectSelectorMode.LIST,
@@ -1351,7 +1359,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         return self.async_show_form(step_id="spaces_menu", data_schema=schema)
 
     async def async_step_space_manage(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None,
+        default_action: str = "edit",
     ) -> config_entries.ConfigFlowResult:
         """Manage selected space."""
         if user_input is not None:
@@ -1364,7 +1374,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 return await self.async_step_emitters_menu()
             if act == "delete":
                 return await self.async_step_space_delete()
-            return await self.async_step_spaces_menu()
+            return await self.async_step_spaces_menu(default_action="back")
 
         s_id = self._selected_space_id or ""
         space = next(
@@ -1375,7 +1385,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         schema = vol.Schema(
             {
-                vol.Required("action", default="edit"): selector.SelectSelector(
+                vol.Required("action", default=default_action): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=[
                             {"value": "edit", "label": f"Edit {s_name} Settings"},
@@ -1414,7 +1424,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         if user_input is not None:
             if user_input.get("cancel"):
-                return await self.async_step_spaces_menu()
+                return await self.async_step_spaces_menu(default_action="back")
 
             name = (
                 user_input.get(CONF_NAME, "").strip()
@@ -1467,13 +1477,14 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                                 "boiler_emitter_producer"
                             ) or user_input.get("emitter_producer")
 
-                        if emitter_entity and emitter_prod:
-                            emitter_entry = {
+                        if emitter_prod:
+                            emitter_entry: dict[str, Any] = {
                                 CONF_TYPE: emitter_type,
                                 CONF_PRODUCER: emitter_prod,
-                                CONF_ENTITY_ID: emitter_entity,
                                 CONF_OFFSET: 0.0,
                             }
+                            if emitter_entity:
+                                emitter_entry[CONF_ENTITY_ID] = emitter_entity
                             if emitter_type == "mini_split":
                                 emitter_entry[CONF_NOMINAL_BTU] = float(
                                     user_input.get("emitter_nominal_btu", 12000.0)
@@ -1510,13 +1521,13 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
                     self._options.setdefault(CONF_SPACES, []).append(space_entry)
                     self._selected_space_id = s_id
-                    return await self.async_step_space_manage()
+                    return await self.async_step_space_manage(default_action="back")
 
         schema_dict: dict[Any, Any] = {
             vol.Optional(CONF_NAME): str,
             vol.Optional(CONF_ID): str,
             vol.Optional(CONF_TEMP_SENSOR): selector.EntitySelector(
-                selector.EntitySelectorConfig(domain="sensor")
+                selector.EntitySelectorConfig(domain=["sensor", "climate"])
             ),
             vol.Optional(CONF_FLOOR_AREA, default=300.0): selector.NumberSelector(
                 selector.NumberSelectorConfig(
@@ -1726,7 +1737,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         if user_input is not None:
             if user_input.get("cancel"):
-                return await self.async_step_space_manage()
+                return await self.async_step_space_manage(default_action="back")
 
             if user_input.get("delete_space"):
                 self._options[CONF_SPACES] = [
@@ -1734,7 +1745,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     for s in self._options.get(CONF_SPACES, [])
                     if s.get(CONF_ID) != s_id
                 ]
-                return await self.async_step_spaces_menu()
+                return await self.async_step_spaces_menu(default_action="back")
 
             space[CONF_NAME] = user_input[CONF_NAME]
             space[CONF_TEMP_SENSOR] = user_input[CONF_TEMP_SENSOR]
@@ -1755,7 +1766,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 CONF_SHARED_BOILER_ROLE,
                 space.get(CONF_SHARED_BOILER_ROLE, "independent"),
             )
-            return await self.async_step_space_manage()
+            return await self.async_step_space_manage(default_action="back")
 
         schema = vol.Schema(
             {
@@ -1763,7 +1774,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 vol.Required(
                     CONF_TEMP_SENSOR, default=space.get(CONF_TEMP_SENSOR, "")
                 ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="sensor")
+                    selector.EntitySelectorConfig(domain=["sensor", "climate"])
                 ),
                 vol.Optional(
                     CONF_FLOOR_AREA, default=space.get(CONF_FLOOR_AREA, 300.0)
@@ -1880,7 +1891,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         )
 
     async def async_step_presets_menu(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None,
+        default_action: str = "add",
     ) -> config_entries.ConfigFlowResult:
         """Show schedule presets list for selected space."""
         s_id = self._selected_space_id or ""
@@ -1889,14 +1902,14 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             None,
         )
         if not space:
-            return await self.async_step_spaces_menu()
+            return await self.async_step_spaces_menu(default_action="back")
 
         if user_input is not None:
             choice = user_input["preset_action"]
             if choice == "add":
                 return await self.async_step_preset_add()
             if choice == "back":
-                return await self.async_step_space_manage()
+                return await self.async_step_space_manage(default_action="back")
             self._selected_preset_name = choice
             return await self.async_step_preset_edit()
 
@@ -1915,7 +1928,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         schema = vol.Schema(
             {
-                vol.Required("preset_action", default="add"): selector.SelectSelector(
+                vol.Required(
+                    "preset_action", default=default_action
+                ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=options,
                         mode=selector.SelectSelectorMode.LIST,
@@ -1964,7 +1979,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         if user_input is not None:
             if user_input.get("cancel"):
-                return await self.async_step_presets_menu()
+                return await self.async_step_presets_menu(default_action="back")
 
             sched_entity = user_input.get("schedule_entity")
             if not sched_entity:
@@ -1980,7 +1995,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     errors["base"] = "preset_exists"
                 else:
                     presets[p_name] = sched_entity
-                    return await self.async_step_presets_menu()
+                    return await self.async_step_presets_menu(default_action="back")
 
         schema = vol.Schema(
             {
@@ -2023,11 +2038,11 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         if user_input is not None:
             if user_input.get("cancel"):
-                return await self.async_step_presets_menu()
+                return await self.async_step_presets_menu(default_action="back")
 
             if user_input.get("delete_preset"):
                 presets.pop(old_name, None)
-                return await self.async_step_presets_menu()
+                return await self.async_step_presets_menu(default_action="back")
 
             sched_entity = user_input["schedule_entity"]
             custom_name = user_input.get("preset_name")
@@ -2039,7 +2054,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 presets.pop(old_name, None)
                 presets[new_name] = sched_entity
                 self._selected_preset_name = new_name
-                return await self.async_step_presets_menu()
+                return await self.async_step_presets_menu(default_action="back")
 
         schema = vol.Schema(
             {
@@ -2072,7 +2087,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         return await self.async_step_preset_edit(user_input)
 
     async def async_step_emitters_menu(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None,
+        default_action: str = "add",
     ) -> config_entries.ConfigFlowResult:
         """Show emitters list for selected space."""
         s_id = self._selected_space_id or ""
@@ -2081,14 +2098,14 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             None,
         )
         if not space:
-            return await self.async_step_spaces_menu()
+            return await self.async_step_spaces_menu(default_action="back")
 
         if user_input is not None:
             choice = user_input["emitter_action"]
             if choice == "add":
                 return await self.async_step_emitter_add()
             if choice == "back":
-                return await self.async_step_space_manage()
+                return await self.async_step_space_manage(default_action="back")
             self._selected_emitter_idx = int(choice)
             return await self.async_step_emitter_edit()
 
@@ -2097,11 +2114,14 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
         for idx, e in enumerate(emitters):
             e_type = e.get(CONF_TYPE, "emitter")
             e_prod = e.get(CONF_PRODUCER, "")
-            e_entity = e.get(CONF_ENTITY_ID, "")
+            e_entity = e.get(CONF_ENTITY_ID)
+            target_label = (
+                f"{e_prod} -> {e_entity}" if e_entity else f"{e_prod}, advisory-only"
+            )
             options.append(
                 {
                     "value": str(idx),
-                    "label": f"[{idx + 1}] {e_type} ({e_prod} -> {e_entity})",
+                    "label": f"[{idx + 1}] {e_type} ({target_label})",
                 }
             )
         options.append(
@@ -2110,7 +2130,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         schema = vol.Schema(
             {
-                vol.Required("emitter_action", default="add"): selector.SelectSelector(
+                vol.Required(
+                    "emitter_action", default=default_action
+                ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=options,
                         mode=selector.SelectSelectorMode.LIST,
@@ -2202,44 +2224,42 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         if user_input is not None:
             if user_input.get("cancel"):
-                return await self.async_step_emitters_menu()
+                return await self.async_step_emitters_menu(default_action="back")
 
             entity_id = user_input.get(CONF_ENTITY_ID)
-            if not entity_id:
-                errors[CONF_ENTITY_ID] = "entity_required"
+            emitter_type = user_input.get(CONF_TYPE, default_emitter_type)
+            if emitter_type == "mini_split":
+                emitter_prod = user_input.get("hp_emitter_producer") or user_input.get(
+                    CONF_PRODUCER, hp_options[0]["value"]
+                )
+            elif emitter_type == "furnace":
+                emitter_prod = user_input.get(
+                    "furnace_emitter_producer"
+                ) or user_input.get(CONF_PRODUCER, furnace_options[0]["value"])
             else:
-                emitter_type = user_input.get(CONF_TYPE, default_emitter_type)
-                if emitter_type == "mini_split":
-                    emitter_prod = user_input.get(
-                        "hp_emitter_producer"
-                    ) or user_input.get(CONF_PRODUCER, hp_options[0]["value"])
-                elif emitter_type == "furnace":
-                    emitter_prod = user_input.get(
-                        "furnace_emitter_producer"
-                    ) or user_input.get(CONF_PRODUCER, furnace_options[0]["value"])
-                else:
-                    emitter_prod = user_input.get(
-                        "boiler_emitter_producer"
-                    ) or user_input.get(CONF_PRODUCER, boiler_options[0]["value"])
+                emitter_prod = user_input.get(
+                    "boiler_emitter_producer"
+                ) or user_input.get(CONF_PRODUCER, boiler_options[0]["value"])
 
-                emitter_data = {
-                    CONF_TYPE: emitter_type,
-                    CONF_PRODUCER: emitter_prod,
-                    CONF_ENTITY_ID: entity_id,
-                    CONF_OFFSET: float(user_input.get(CONF_OFFSET, 0.0)),
-                }
-                if emitter_type == "mini_split":
-                    emitter_data[CONF_NOMINAL_BTU] = float(
-                        user_input.get(CONF_NOMINAL_BTU, 12000.0)
-                    )
-                elif emitter_type == "hydronic":
-                    emitter_data[CONF_ZONE_ID] = user_input.get(CONF_ZONE_ID, "z1")
-                    emitter_data[CONF_HYDRONIC_TYPE] = user_input.get(
-                        CONF_HYDRONIC_TYPE, "fin_tube_baseboard"
-                    )
+            emitter_data: dict[str, Any] = {
+                CONF_TYPE: emitter_type,
+                CONF_PRODUCER: emitter_prod,
+                CONF_OFFSET: float(user_input.get(CONF_OFFSET, 0.0)),
+            }
+            if entity_id:
+                emitter_data[CONF_ENTITY_ID] = entity_id
+            if emitter_type == "mini_split":
+                emitter_data[CONF_NOMINAL_BTU] = float(
+                    user_input.get(CONF_NOMINAL_BTU, 12000.0)
+                )
+            elif emitter_type == "hydronic":
+                emitter_data[CONF_ZONE_ID] = user_input.get(CONF_ZONE_ID, "z1")
+                emitter_data[CONF_HYDRONIC_TYPE] = user_input.get(
+                    CONF_HYDRONIC_TYPE, "fin_tube_baseboard"
+                )
 
-                space.setdefault(CONF_EMITTERS, []).append(emitter_data)
-                return await self.async_step_emitters_menu()
+            space.setdefault(CONF_EMITTERS, []).append(emitter_data)
+            return await self.async_step_emitters_menu(default_action="back")
 
         schema = vol.Schema(
             {
@@ -2349,11 +2369,11 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
         if user_input is not None:
             if user_input.get("cancel"):
-                return await self.async_step_emitters_menu()
+                return await self.async_step_emitters_menu(default_action="back")
 
             if user_input.get("delete_emitter"):
                 emitters.pop(self._selected_emitter_idx)
-                return await self.async_step_emitters_menu()
+                return await self.async_step_emitters_menu(default_action="back")
 
             e_type = user_input.get(
                 CONF_TYPE, emitter_data.get(CONF_TYPE, "mini_split")
@@ -2373,7 +2393,10 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
 
             emitter_data[CONF_TYPE] = e_type
             emitter_data[CONF_PRODUCER] = emitter_prod
-            emitter_data[CONF_ENTITY_ID] = user_input[CONF_ENTITY_ID]
+            if user_input.get(CONF_ENTITY_ID):
+                emitter_data[CONF_ENTITY_ID] = user_input[CONF_ENTITY_ID]
+            else:
+                emitter_data.pop(CONF_ENTITY_ID, None)
             emitter_data[CONF_OFFSET] = float(user_input.get(CONF_OFFSET, 0.0))
             if e_type == "mini_split":
                 emitter_data[CONF_NOMINAL_BTU] = float(
@@ -2392,7 +2415,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 emitter_data.pop(CONF_ZONE_ID, None)
                 emitter_data.pop(CONF_HYDRONIC_TYPE, None)
                 emitter_data.pop(CONF_HYDRONIC_TYPE, None)
-            return await self.async_step_emitters_menu()
+            return await self.async_step_emitters_menu(default_action="back")
 
         producers = self._options.get(CONF_PRODUCERS, {})
         hp_options = [
@@ -2492,8 +2515,15 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Required(
-                    CONF_ENTITY_ID, default=emitter_data.get(CONF_ENTITY_ID, "")
+                (
+                    vol.Optional(
+                        CONF_ENTITY_ID,
+                        description={
+                            "suggested_value": emitter_data.get(CONF_ENTITY_ID)
+                        },
+                    )
+                    if emitter_data.get(CONF_ENTITY_ID)
+                    else vol.Optional(CONF_ENTITY_ID)
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain=["climate", "switch"])
                 ),
