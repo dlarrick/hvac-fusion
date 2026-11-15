@@ -416,7 +416,7 @@ async def test_options_flow_producers_crud(hass: HomeAssistant) -> None:
             CONF_ID: "hp_test",
             CONF_NAME: "Test Heat Pump",
             CONF_TYPE: "heat_pump",
-            "heat_pump_profile": "mitsubishi/mxz_xcxxnahz2.json",
+            "heat_pump_profile": "generic/cold_climate_heat_pump.json",
             CONF_NOMINAL_BTU: 36000.0,
         },
     )
@@ -440,7 +440,7 @@ async def test_options_flow_producers_crud(hass: HomeAssistant) -> None:
         {
             CONF_NAME: "Updated Heat Pump",
             CONF_TYPE: "heat_pump",
-            "heat_pump_profile": "mitsubishi/mxz_xcxxnahz2.json",
+            "heat_pump_profile": "generic/cold_climate_heat_pump.json",
         },
     )
     assert result["step_id"] == "producers_menu"
@@ -456,7 +456,7 @@ async def test_options_flow_producers_crud(hass: HomeAssistant) -> None:
         {
             CONF_NAME: "Updated Heat Pump",
             CONF_TYPE: "heat_pump",
-            "heat_pump_profile": "mitsubishi/mxz_xcxxnahz2.json",
+            "heat_pump_profile": "generic/cold_climate_heat_pump.json",
             "delete_producer": True,
         },
     )
@@ -488,7 +488,7 @@ async def test_options_flow_spaces_and_emitters(hass: HomeAssistant) -> None:
                 "hp1": {
                     CONF_NAME: "Heat Pump 1",
                     CONF_TYPE: "inverter_heat_pump",
-                    CONF_PROFILE: "mitsubishi/mxz_xcxxnahz2.json",
+                    CONF_PROFILE: "generic/cold_climate_heat_pump.json",
                 }
             },
             CONF_SPACES: [],
@@ -953,7 +953,7 @@ async def test_options_flow_conditional_producer_and_emitter_fields(
             CONF_ID: "boiler1",
             CONF_NAME: "Main Boiler",
             CONF_TYPE: "modulating_boiler",
-            "modulating_boiler_profile": "none",
+            "modulating_boiler_profile": "generic/modulating_condensing_boiler.json",
             CONF_FUEL_TYPE: "propane",
         },
     )
@@ -970,7 +970,7 @@ async def test_options_flow_conditional_producer_and_emitter_fields(
             CONF_ID: "hp1",
             CONF_NAME: "Heat Pump 1",
             CONF_TYPE: "heat_pump",
-            "heat_pump_profile": "none",
+            "heat_pump_profile": "generic/cold_climate_heat_pump.json",
         },
     )
     assert result["step_id"] == "producers_menu"

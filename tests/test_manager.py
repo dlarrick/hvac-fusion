@@ -581,3 +581,152 @@ async def test_advisory_only_space_and_emitters_without_entity_id():
     assert "living_room" in manager.last_plan.diagnostics.space_crossover_temps
     assert manager.economic_crossover_temperature is not None
     hass.services.async_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("producer_id", "producer_conf", "emitter_conf", "entity_id"),
+    [
+        (
+            "hp1",
+            {
+                CONF_NAME: "Heat Pump",
+                CONF_TYPE: "heat_pump",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+            },
+            {
+                CONF_TYPE: "mini_split",
+                CONF_PRODUCER: "hp1",
+                "entity_id": "climate.lr_head",
+                "nominal_btu": 12000.0,
+            },
+            "climate.lr_head",
+        ),
+        (
+            "boiler1",
+            {
+                CONF_NAME: "Boiler",
+                CONF_TYPE: "boiler",
+                CONF_FUEL_TYPE: "natural_gas",
+                CONF_PROFILE: "generic/modulating_condensing_boiler.json",
+            },
+            {
+                CONF_TYPE: "hydronic",
+                CONF_PRODUCER: "boiler1",
+                CONF_ENTITY_ID: "climate.lr_bb",
+                "zone_id": "z1",
+                "hydronic_type": "fin_tube_baseboard",
+            },
+            "climate.lr_bb",
+        ),
+    ],
+)
+async def test_single_producer_only_evaluation_and_cost_estimates(
+    producer_id, producer_conf, emitter_conf, entity_id
+):
+    """Single-producer setups (HP-only or boiler-only) evaluate, actuate, and estimate cost."""
+    hass = MagicMock(spec=HomeAssistant)
+    hass.states = MagicMock()
+    hass.services = MagicMock()
+    hass.services.async_call = AsyncMock()
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *args: fn(*args))
+
+    def mock_state_get(eid):
+        state = MagicMock()
+        if eid == "sensor.outdoor_temp":
+            state.state = "35.0"
+            state.attributes = {}
+        elif eid == "sensor.living_room_temp":
+            state.state = "65.0"
+            state.attributes = {}
+        elif eid == entity_id:
+            state.state = "off"
+            state.attributes = {"min_temp": 50.0, "max_temp": 85.0}
+        else:
+            return None
+        return state
+
+    hass.states.get = mock_state_get
+
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_CONTROL_ENABLED: True,
+        CONF_TARIFFS: {
+            "electric_cost_per_kwh": 0.25,
+            "gas_cost_per_therm": 1.50,
+        },
+        CONF_PRODUCERS: {producer_id: producer_conf},
+        CONF_SPACES: [
+            {
+                CONF_ID: "living_room",
+                CONF_NAME: "Living Room",
+                CONF_TEMP_SENSOR: "sensor.living_room_temp",
+                "floor_area_sqft": 450.0,
+                "ceiling_height_ft": 9.0,
+                "envelope_score": 4,
+                "thermal_mass": 3,
+                CONF_EMITTERS: [emitter_conf],
+            }
+        ],
+    }
+
+    manager = HvacFusionManager(hass, conf)
+    await manager.async_init()
+    await manager.async_evaluate()
+
+    assert manager.last_plan is not None
+    assert manager.economic_crossover_temperature is None
+    assert manager.last_plan.space_directives[
+        "living_room"
+    ].active_delivery_unit_ids == [f"living_room_{producer_id}_0"]
+    assert manager.cost_estimates["chosen_cost_per_hr"] is not None
+    assert manager.cost_estimates["chosen_cost_per_hr"] > 0
+    assert hass.services.async_call.called
+
+
+@pytest.mark.asyncio
+async def test_heating_only_space_omits_cool_and_heat_cool_modes():
+    """Spaces without cooling emitters omit COOL and HEAT_COOL from hvac_modes."""
+    hass = MagicMock(spec=HomeAssistant)
+    hass.states = MagicMock()
+    hass.services = MagicMock()
+    manager = MagicMock()
+    manager.hass = hass
+
+    heating_only_conf = {
+        CONF_ID: "den",
+        CONF_NAME: "Den",
+        CONF_PRESETS: {"home": "schedule.den_home"},
+        CONF_EMITTERS: [
+            {CONF_TYPE: "hydronic", CONF_PRODUCER: "boiler1", "zone_id": "z1"}
+        ],
+    }
+    entity = HvacFusionSpaceClimate(manager, heating_only_conf)
+    entity.async_write_ha_state = MagicMock()
+
+    assert entity.hvac_modes == ["heat", "off"]
+    assert entity.hvac_mode == "heat"
+
+    # Schedule 'heat_cool' block maps to 'heat'; 'cool' block maps to 'off'
+    sched_state = MagicMock()
+    sched_state.state = "on"
+    sched_state.attributes = {
+        "data": {"hvac_mode": "heat_cool", "heat_to": 68, "cool_to": 74}
+    }
+    hass.states.get = MagicMock(return_value=sched_state)
+    await entity.async_update_from_schedule()
+    assert entity.hvac_mode == "heat"
+
+    sched_state.attributes = {"data": {"hvac_mode": "cool", "cool_to": 74}}
+    await entity.async_update_from_schedule()
+    assert entity.hvac_mode == "off"
+
+    # Space with a mini_split emitter keeps all 4 modes
+    cooling_conf = {
+        CONF_ID: "loft",
+        CONF_NAME: "Loft",
+        CONF_EMITTERS: [{CONF_TYPE: "mini_split", CONF_PRODUCER: "hp1"}],
+    }
+    cool_entity = HvacFusionSpaceClimate(manager, cooling_conf)
+    assert cool_entity.hvac_modes == ["heat_cool", "heat", "cool", "off"]
+    assert cool_entity.hvac_mode == "heat_cool"

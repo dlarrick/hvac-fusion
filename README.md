@@ -5,11 +5,11 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/dlarrick/hvac-fusion)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-HVAC Fusion is a Home Assistant custom integration for intelligent management of complex dual-fuel and multi-source HVAC systems (e.g., heat pumps / mini-splits paired with hydronic boilers or furnaces).
+HVAC Fusion is a Home Assistant custom integration for intelligent management of dual-fuel, multi-source, and single-source HVAC systems (e.g., heat pumps / mini-splits paired with hydronic boilers or furnaces, as well as heat-pump-only or boiler-only homes).
 
-Those mini-splits you added to your old house sure are nice in the summer. But do you know how to use them effectively in heating season? Is it cold enough out that your boiler is a better choice? And if you do switch back & forth, does everybody in the house understand which thermostat to use? HVAC Fusion was designed to solve these problems!
+Those mini-splits you added to your old house sure are nice in the summer. But do you know how to use them effectively in heating season? Is it cold enough out that your boiler is a better choice? And if you do switch back & forth, does everybody in the house understand which thermostat to use? HVAC Fusion was designed to solve these problems! Even with a single heat source, you still get a nice visual 7-day schedule editor, temporary comfort bump control, multi-split conflict arbitration, and real-time cost estimation.
 
-It acts as a coordinator layer, creating virtual climate entities for living spaces while dynamically optimizing fuel switchover, avoiding multi-split refrigerant conflicts, and orchestrating underlying physical thermostats.
+HVAC Fusion acts as a coordinator layer, creating virtual climate entities for living spaces while dynamically optimizing fuel switchover, avoiding multi-split refrigerant conflicts, and orchestrating underlying physical thermostats.
 
 HVAC Fusion uses the core physics and arbitration engine from [`hvac-crossover`](https://github.com/dlarrick/hvac-crossover).
 
@@ -119,7 +119,7 @@ Even if your HVAC system is not integrated with Home Assistant, there's still va
 Configure the following:
 
 - Outside temperature sensor. This sensor can be (and often is) from a weather forecast entity.
-- Producers. Your boiler(s), heat pump(s), and (soon) furnaces. Use a generic model, or look up & contribute a profile for your actual model.
+- Producers. Your boiler(s), heat pump(s), and (soon) furnaces. Use a generic model, or look up & contribute a profile for your actual model in [`hvac-profiles`](https://github.com/dlarrick/hvac-profiles).
 - Fuel tariffs. The price per unit for each of your fuel sources. This can be a fixed number, a sensor, or an input number.
 
 With this configuration HVAC Fusion provides advisory and equipment entities:
@@ -154,7 +154,7 @@ For complete field descriptions and setup details, see the [Configuration Refere
 2. Manage Producers:
    - Boilers (natural gas, propane, or fuel oil, with manufacturer or generic profiles)
    - Heat pump outdoor units (with manufacturer or generic profiles)
-   - *(Don't see your exact model? Use a generic profile for now—contributions of new equipment profiles to [`hvac-crossover`](https://github.com/dlarrick/hvac-crossover) via GitHub issues or PRs are very welcome!)*
+   - *(Don't see your exact model? Use a generic profile for now—contributions of new equipment profiles to [`hvac-profiles`](https://github.com/dlarrick/hvac-profiles) via PR (see its [CONTRIBUTING guide](https://github.com/dlarrick/hvac-profiles/blob/main/CONTRIBUTING.md)) are very welcome!)*
 3. Manage Spaces:
    - Define spaces (rooms or zones), temperature sensors, and room dimensions
    - Arbitration priority (resolves heat/cool mode conflicts across multi-split heads sharing an outdoor unit)
@@ -253,6 +253,8 @@ A dedicated status sensor is created for each piece of heating or cooling equipm
 ## Acknowledgments & Attribution
 
 The visual presentation, dual-setpoint interaction, and weekly calendar layout in `schedule-preset-card` are adapted from and inspired by the excellent work of **[arozoire](https://github.com/arozoire)** in [`schedule_creator`](https://github.com/arozoire/schedule_creator) and `weekly-schedule-card` (MIT Licensed), re-engineered here to operate natively with Home Assistant's built-in `schedule.*` helper entities and Core WebSocket APIs.
+
+Manufacturer equipment performance profiles are fetched at runtime from **[hvac-profiles](https://github.com/dlarrick/hvac-profiles)**, licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
 ## License
 
