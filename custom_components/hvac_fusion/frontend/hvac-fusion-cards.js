@@ -4892,7 +4892,7 @@ let HvacFusionSystemCard = class extends i {
                     <div class="kpi-sub">${formatSavingsPct(hpSavedHr, rateAttrs.heat_pump_baseline_cost_per_hr)}</div>
                   </div>
                 </div>
-                <div class="diag-pills">
+                <div class="baseline-pills">
                   <div class="diag-pill">
                     <span class="diag-label">Optimized:</span>
                     <span class="diag-value">${this.formatRate(rateState == null ? void 0 : rateState.state)}</span>
@@ -5097,6 +5097,22 @@ HvacFusionSystemCard.styles = i$3`
       font-size: 0.7rem;
       color: var(--secondary-text-color, #94a3b8);
       margin-top: 2px;
+    }
+
+    .baseline-pills {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .baseline-pills .diag-pill {
+      justify-content: center;
+    }
+
+    @media (max-width: 520px) {
+      .baseline-pills {
+        grid-template-columns: 1fr;
+      }
     }
 
     /* Section 2: Producers (3-across 2-line pills) */
