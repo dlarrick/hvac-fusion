@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 import logging
 import math
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.climate import (
@@ -36,8 +36,10 @@ from hvac_crossover import Diagnostics, HvacAction, SpaceDirective
 
 from . import get_manager
 from .const import (
+    CONF_EMITTERS,
     CONF_PRESETS,
     CONF_SPACES,
+    CONF_TYPE,
     DEFAULT_COOL_TO,
     DEFAULT_HEAT_TO,
     DOMAIN,
@@ -136,12 +138,24 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         self._space_conf = space_conf
         self._space_id = space_conf[CONF_ID]
 
-        self._attr_hvac_modes = [
-            HVACMode.HEAT_COOL,
-            HVACMode.HEAT,
-            HVACMode.COOL,
-            HVACMode.OFF,
-        ]
+        emitters = space_conf.get(CONF_EMITTERS)
+        self._supports_cooling = not emitters or any(
+            e.get(CONF_TYPE) == "mini_split" for e in emitters
+        )
+        if self._supports_cooling:
+            self._attr_hvac_modes = [
+                HVACMode.HEAT_COOL,
+                HVACMode.HEAT,
+                HVACMode.COOL,
+                HVACMode.OFF,
+            ]
+            self._attr_hvac_mode = HVACMode.HEAT_COOL
+        else:
+            self._attr_hvac_modes = [
+                HVACMode.HEAT,
+                HVACMode.OFF,
+            ]
+            self._attr_hvac_mode = HVACMode.HEAT
         raw_name = space_conf[CONF_NAME]
         self._attr_name = (
             raw_name if raw_name.lower().endswith("space") else f"{raw_name} Space"
@@ -150,7 +164,6 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             CONF_UNIQUE_ID, f"hvac_fusion_{self._space_id}_space"
         )
 
-        self._attr_hvac_mode = HVACMode.HEAT_COOL
         self._attr_hvac_action = HVACAction.IDLE
 
         # Presets & Schedules
@@ -553,11 +566,15 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             if mode_str == "heat":
                 self._attr_hvac_mode = HVACMode.HEAT
             elif mode_str == "cool":
-                self._attr_hvac_mode = HVACMode.COOL
+                self._attr_hvac_mode = (
+                    HVACMode.COOL if self._supports_cooling else HVACMode.OFF
+                )
             elif mode_str == "off":
                 self._attr_hvac_mode = HVACMode.OFF
             else:
-                self._attr_hvac_mode = HVACMode.HEAT_COOL
+                self._attr_hvac_mode = (
+                    HVACMode.HEAT_COOL if self._supports_cooling else HVACMode.HEAT
+                )
 
             heat_to = (
                 data_dict.get("heat_to")
