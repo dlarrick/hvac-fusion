@@ -98,7 +98,9 @@ A Space represents an independently monitored room or physical zone. Each config
 | **Display Name** | Friendly name (e.g. `Living Room`, `Primary Bedroom`). | String | Required |
 | **Temperature Sensor** | Current space temperature sensor (from a dedicated room sensor or a climate entity). | `climate.*` or `sensor.*` | Required |
 | **Floor Area** | Floor surface area in square feet. | Sq. Ft. | `300.0` |
-| **Ceiling Height** | Average ceiling height in feet. Room volume ($A \times h$) models thermal heat loss. | Feet | `8.0` |
+| **Ceiling Height** | Average ceiling height in feet. Space volume ($A \times h$) models thermal capacitance. | Feet | `8.0` |
+| **Insulation & Air Sealing** | Space envelope heat-retention score from `1` (uninsulated & drafty) to `10` (airtight Passive House). See reference table below. | Integer (1–10) | `5` |
+| **Thermal Mass** | How much heat the space's walls and floors absorb and release during setback recovery, from `1` (lightweight & fast-changing) to `5` (heavy masonry/slab). | Integer (1–5) | `3` |
 | **Arbitration Priority** | Weight from `1` (lowest) to `10` (highest). Resolves heating vs. cooling mode conflicts when multiple spaces share an outdoor heat pump. | Integer (1–10) | `5` |
 | **Window / Door Sensor** *(Optional)* | Contact sensor. Opening the window immediately switches the space to `off` to prevent energy waste. | `binary_sensor.*` | Optional |
 | **Shared Boiler Role** | How hydronic heating in this room interacts with shared zone valves: | Selector | `independent` |
@@ -106,6 +108,60 @@ A Space represents an independently monitored room or physical zone. Each config
 | | • `primary`: Space controls the physical thermostat driving a shared hydronic zone loop. | | |
 | | • `secondary`: Space shares a hydronic zone loop controlled by a primary room; accepts heat opportunistically when the primary calls, but cannot independently fire the zone. | | |
 | **Schedule Presets** *(Optional)* | Maps preset names (`occupied`, `away`, `sleep`, etc.) to Home Assistant `schedule` entities. | Entity map | Optional |
+
+#### Insulation & Air Sealing Reference (`1–10`)
+
+| Score | Typical Construction / Performance | Gross UA / sq ft |
+| :---: | :--- | :---: |
+| **1** | Uninsulated & very drafty (empty wall cavities, single-pane windows, ~18 ACH50) | `0.70` |
+| **3** | Older / minimal wall insulation, single-pane with storms (~12 ACH50) | `0.42` |
+| **5** | Average existing home (modest wall/attic insulation, older double-pane, ~7 ACH50) | `0.26` |
+| **7** | Modern code-built / well-insulated & air-sealed (R-20 walls, low-E windows, ~3 ACH50) | `0.16` |
+| **9** | High-performance / net-zero ready (~1.5 ACH50) | `0.09` |
+| **10** | Airtight Passive House (PHIUS/PHI, triple-pane, 0.6 ACH50 + ERV) | `0.06` |
+
+*Tip:* Interior or middle-floor spaces sandwiched between conditioned zones lose less heat per sq ft than corner rooms or sloped-roof attics — nudge those spaces up or down by 1–2 points as needed.
+
+#### Thermal Mass Reference (`1–5`)
+
+* **1 — Lightweight & fast-changing:** Drywall, carpet over plywood, minimal interior mass.
+* **3 — Average:** Drywall or plaster, wood floors, typical furniture.
+* **5 — Heavy thermal mass:** Exposed concrete slab, masonry, stone, or adobe.
+
+#### Tuning Scores from Actual Daily Consumption
+
+If you have real energy metering in Home Assistant (circuit-level heat pump monitors, smart gas/electric meters, or utility daily usage), you can dial in your `Insulation & Air Sealing` scores in a few minutes:
+
+1. **Pick 1–3 cloudy, cold days** (average outdoor temp below ~45°F with minimal sun). Avoid tuning from a bright sunny day, where passive solar gain through windows naturally lowers actual heating below the model's baseline.
+2. **Record HVAC Fusion's 24-hour estimate:** Enable the opt-in **Estimated heating cost** sensor (or sum 24 hourly bars in a Statistics Graph card) for the same 24-hour window.
+3. **Calculate your actual 24-hour space-heating cost:**
+   * **Sub-metered heat pumps:** `(total ODU kWh) × ($/kWh)`.
+   * **Fossil fuel (gas / propane / oil):** Subtract a mild-weather non-heating baseline day (domestic hot water, cooking, dryer) from the day's fuel usage, then multiply by your fuel tariff.
+   * **Whole-house electric (no sub-meter):** Subtract a mild-weather non-HVAC electric day, then multiply by `$/kWh`.
+4. **Adjust `Insulation & Air Sealing` proportionally:** On the non-linear `1–10` curve, each **+1 point** reduces modeled heat loss by roughly **15–20%**, and each **−1 point** increases it by roughly **20–25%**:
+   * Estimate is **~20% too high** → raise scores by **+1** (e.g., `5 → 6`).
+   * Estimate is **~40% too high** → raise scores by **+2** (e.g., `5 → 7`).
+   * Estimate is **~25% too low** → lower scores by **−1** (e.g., `5 → 4`).
+5. **Refine per space (optional):** Once the whole-house daily total tracks within ~10–15% across a couple of cloudy days, you can nudge individual spaces up or down by 1 point based on exposure (higher for interior/middle floors, lower for corner rooms or sloped-roof attics).
+
+#### Tuning Thermal Mass from Observed Recovery
+
+`Thermal Mass` (`1–5`) governs the extra energy absorbed by walls, floors, and furnishings when warming a space back up from a setback. Once your `Insulation & Air Sealing` score is dialed in:
+
+1. **Pick a clean setback recovery window** (e.g., a 1–2 hour morning warm-up where the space rises by at least `3–6°F` with minimal sun).
+2. **Estimate delivered BTUs during recovery:**
+   * **Heat pump:** `(ODU kWh during recovery) × 3,412 × (current COP)`.
+   * **Gas / propane / oil boiler or furnace:** `(fuel used during recovery) × (BTU per unit) × (AFUE / efficiency)` (e.g., `100,000 BTU/therm` for natural gas, `91,500 BTU/gal` for propane, `138,500 BTU/gal` for #2 oil).
+3. **Subtract steady-state envelope loss** during the same window (`total_heat_loss_btu_per_hr × hours` just before or after recovery). The remainder is the **thermal-mass soak** (BTUs absorbed by the space's structure).
+4. **Divide by temperature rise and floor area:**
+   $$\text{Effective Capacitance} = \frac{\text{Mass Soak BTUs}}{\Delta T_{\text{rise}} \times \text{Floor Area (sq ft)}}$$
+   Match the result to the `1–5` scale (for ~8–9 ft ceilings):
+   * **1 (Very Low):** `~0.8–1.2 BTU/(°F·sq ft)`
+   * **2 (Low):** `~1.3–1.8 BTU/(°F·sq ft)`
+   * **3 (Medium):** `~1.9–2.5 BTU/(°F·sq ft)`
+   * **4 (High):** `~2.6–3.2 BTU/(°F·sq ft)`
+   * **5 (Very High):** `~3.3–4.5+ BTU/(°F·sq ft)`
+5. **Quick visual check (no math required):** Compare the morning recovery bar on HVAC Fusion's hourly cost chart against your actual metered morning spike — if the modeled recovery bump is noticeably smaller than reality, step `Thermal Mass` up by **+1**; if larger, step down by **−1**.
 
 ---
 

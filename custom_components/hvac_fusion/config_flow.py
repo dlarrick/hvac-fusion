@@ -66,12 +66,8 @@ _LOGGER = logging.getLogger(__name__)
 
 ENVELOPE_SCORE_OPTIONS: list[selector.SelectOptionDict] = [
     {
-        "value": "0",
-        "label": "0 — Uninsulated & very drafty (unfinished basement, uninsulated sunroom or garage)",
-    },
-    {
         "value": "1",
-        "label": "1 — Very poor (mostly uninsulated, single-pane windows, obvious drafts)",
+        "label": "1 — Uninsulated & very drafty (uninsulated walls, single-pane windows, obvious drafts)",
     },
     {
         "value": "2",
@@ -1745,6 +1741,9 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
             )
             return await self.async_step_space_manage(default_action="back")
 
+        raw_env = float(space.get(CONF_ENVELOPE_SCORE, DEFAULT_ENVELOPE_SCORE))
+        env_default = str(max(1, min(10, round(raw_env))))
+
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=space.get(CONF_NAME, s_id)): str,
@@ -1775,8 +1774,7 @@ class HvacFusionOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                     )
                 ),
                 vol.Optional(
-                    CONF_ENVELOPE_SCORE,
-                    default=str(space.get(CONF_ENVELOPE_SCORE, DEFAULT_ENVELOPE_SCORE)),
+                    CONF_ENVELOPE_SCORE, default=env_default
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=ENVELOPE_SCORE_OPTIONS,

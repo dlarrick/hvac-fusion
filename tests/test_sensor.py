@@ -748,3 +748,92 @@ async def test_controllable_emitter_sets_advisory_only_false(
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_cost_estimates_not_calling_overshoot_and_thermal_mass_pullup(
+    hass: HomeAssistant,
+) -> None:
+    """Verify +2°F overshoot zeroes load, balance point zeroes load, and recovery pull-up adds mass load."""
+    hass.states.async_set("sensor.outdoor_temp", "40.0")
+    hass.states.async_set("sensor.room_temp", "64.0")
+
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {
+            CONF_ELECTRIC_COST_PER_KWH: 0.25,
+            CONF_GAS_COST_PER_THERM: 1.88,
+        },
+        CONF_PRODUCERS: {
+            "hp": {
+                CONF_NAME: "Heat Pump",
+                CONF_TYPE: "heat_pump",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+            },
+            "boiler": {
+                CONF_NAME: "Boiler",
+                CONF_TYPE: "boiler",
+                CONF_FUEL_TYPE: "natural_gas",
+                CONF_PROFILE: "generic/modulating_condensing_boiler.json",
+            },
+        },
+        CONF_SPACES: [
+            {
+                CONF_ID: "loft",
+                CONF_NAME: "Loft",
+                CONF_TEMP_SENSOR: "sensor.room_temp",
+                "floor_area_sqft": 500.0,
+                "ceiling_height_ft": 8.0,
+                "envelope_score": 5,
+                "thermal_mass": 3,
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp",
+                        CONF_NOMINAL_BTU: 12000.0,
+                    },
+                    {
+                        CONF_TYPE: "hydronic",
+                        CONF_PRODUCER: "boiler",
+                    },
+                ],
+            }
+        ],
+    }
+
+    manager = HvacFusionManager(hass, conf, entry_id="test_mass_entry")
+    await manager.async_init()
+
+    # 1. Baseline steady-state evaluation at 64°F (DEFAULT_HEAT_TO = 68°F, outdoor = 40°F)
+    await manager.async_evaluate()
+    base_btu = manager.cost_estimates["total_heat_loss_btu_per_hr"]
+    base_cost = manager.cost_estimates["chosen_cost_per_hr"]
+    # UA = 500 * 0.26 = 130, ΔT = 28°F -> gross 3640 - 500 internal gains = 3140 BTU/hr
+    assert abs(base_btu - 3140.0) < 1.0
+    assert base_cost > 0.0
+
+    # 2. Simulate 15 minutes elapsed with room warming 64°F -> 66°F (active recovery pull-up)
+    manager._last_cost_eval_utc = datetime.now(timezone.utc) - timedelta(minutes=15)
+    hass.states.async_set("sensor.room_temp", "66.0")
+    await manager.async_evaluate()
+    pullup_btu = manager.cost_estimates["total_heat_loss_btu_per_hr"]
+    pullup_cost = manager.cost_estimates["chosen_cost_per_hr"]
+    assert pullup_btu > base_btu
+    assert pullup_cost > base_cost
+
+    # 3. Room exceeds heat_to (68°F) by >= 2.0°F (70°F, e.g. solar/stairwell heat) -> $0.00/hr
+    manager._last_cost_eval_utc = datetime.now(timezone.utc) - timedelta(minutes=15)
+    hass.states.async_set("sensor.room_temp", "70.0")
+    await manager.async_evaluate()
+    assert manager.cost_estimates["total_heat_loss_btu_per_hr"] == 0.0
+    assert manager.cost_estimates["chosen_cost_per_hr"] == 0.0
+    assert manager.cost_estimates["fossil_fuel_baseline_cost_per_hr"] == 0.0
+    assert manager.cost_estimates["heat_pump_baseline_cost_per_hr"] == 0.0
+
+    # 4. Mild outdoor temp above balance point (66°F outdoor vs 68°F setpoint) -> $0.00/hr
+    manager._last_cost_eval_utc = datetime.now(timezone.utc) - timedelta(minutes=15)
+    hass.states.async_set("sensor.room_temp", "68.0")
+    hass.states.async_set("sensor.outdoor_temp", "66.0")
+    await manager.async_evaluate()
+    assert manager.cost_estimates["total_heat_loss_btu_per_hr"] == 0.0
+    assert manager.cost_estimates["chosen_cost_per_hr"] == 0.0
