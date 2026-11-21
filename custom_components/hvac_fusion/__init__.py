@@ -251,6 +251,7 @@ class HvacFusionManager:
         self.cumulative_savings_vs_fossil_fuel: float = 0.0
         self.cumulative_savings_vs_heat_pump: float = 0.0
         self._last_cost_eval_utc: datetime | None = None
+        self._space_mass_temps: dict[str, float] = {}
         self._last_profile_check: datetime | None = None
 
     @property
@@ -783,6 +784,11 @@ class HvacFusionManager:
                     pass
         return 35.0
 
+    # Space is definitely not calling when indoor temp exceeds heating setpoint by this margin
+    COST_NOT_CALLING_OVERSHOOT_F = 2.0
+    # 15-minute RC time constant for smoothed thermal-mass temperature tracking
+    COST_MASS_EMA_TAU_HOURS = 0.25
+
     def _update_cost_estimates(
         self,
         plan: Any,
@@ -794,6 +800,19 @@ class HvacFusionManager:
             return
         if not self.topology.spaces:
             return
+
+        now_utc = datetime.now(UTC)
+        dt_hours = (
+            min(
+                1.0,
+                max(
+                    0.0,
+                    (now_utc - self._last_cost_eval_utc).total_seconds() / 3600.0,
+                ),
+            )
+            if self._last_cost_eval_utc is not None
+            else 0.0
+        )
 
         total_heat_loss_btu = 0.0
         total_chosen_hr = 0.0
@@ -809,7 +828,23 @@ class HvacFusionManager:
 
         for space in self.topology.spaces:
             cond = space_conditions.get(space.id)
-            if cond is None or cond.window_open or cond.comfort.heat_to is None:
+            if cond is None:
+                continue
+
+            # Continuously track smoothed thermal-mass temperature (15-min EMA)
+            prev_mass_temp = self._space_mass_temps.get(space.id)
+            if prev_mass_temp is None or dt_hours <= 0.0:
+                new_mass_temp = cond.current_temp
+                dt_mass = 0.0
+            else:
+                alpha = min(1.0, dt_hours / self.COST_MASS_EMA_TAU_HOURS)
+                new_mass_temp = prev_mass_temp + alpha * (
+                    cond.current_temp - prev_mass_temp
+                )
+                dt_mass = new_mass_temp - prev_mass_temp
+            self._space_mass_temps[space.id] = new_mass_temp
+
+            if cond.window_open or cond.comfort.heat_to is None:
                 continue
 
             entity = self.space_entities.get(space.id)
@@ -819,10 +854,48 @@ class HvacFusionManager:
             ):
                 continue
 
-            load_btu = space.estimated_heat_loss_btu_per_hr(
-                cond.comfort.heat_to, outdoor_temp
-            )
+            # Classify available producers so zero-load spaces still report $0.00/hr rather than unknown
+            space_has_hp = False
+            space_has_fuel = False
+            for emitter in space.emitters:
+                producer = self.topology.get_producer(emitter.producer_id)
+                if producer is None:
+                    continue
+                if isinstance(producer, InverterHeatPumpProducer):
+                    space_has_hp = True
+                else:
+                    space_has_fuel = True
+
+            if not space_has_hp and not space_has_fuel:
+                continue
+
+            # If space is clearly above heating setpoint (setback coast-down, solar/cooking/stairwell heat),
+            # emitters are not calling: instantaneous heating load is 0.0.
+            if (
+                cond.current_temp
+                >= cond.comfort.heat_to + self.COST_NOT_CALLING_OVERSHOOT_F
+            ):
+                load_btu = 0.0
+            else:
+                load_btu = space.estimated_heat_loss_btu_per_hr(
+                    cond.comfort.heat_to, outdoor_temp
+                )
+                # Add thermal-mass pull-up energy when actively warming toward setpoint
+                if (
+                    dt_hours > 0.0
+                    and dt_mass > 0.0
+                    and cond.current_temp < cond.comfort.heat_to + 1.0
+                ):
+                    load_btu += space.thermal_capacitance_btu_per_f * (
+                        dt_mass / dt_hours
+                    )
+
             if load_btu <= 0.0:
+                has_chosen = True
+                if space_has_fuel:
+                    has_boiler_baseline = True
+                if space_has_hp:
+                    has_hp_baseline = True
                 continue
             total_heat_loss_btu += load_btu
             mmbtu_hr = load_btu / 1_000_000.0
@@ -919,12 +992,7 @@ class HvacFusionManager:
             "total_heat_loss_btu_per_hr": round(total_heat_loss_btu, 1),
         }
 
-        now_utc = datetime.now(UTC)
-        if self._last_cost_eval_utc is not None:
-            dt_hours = min(
-                1.0,
-                max(0.0, (now_utc - self._last_cost_eval_utc).total_seconds() / 3600.0),
-            )
+        if dt_hours > 0.0:
             if has_chosen:
                 self.cumulative_estimated_cost += total_chosen_hr * dt_hours
             if has_boiler_baseline:

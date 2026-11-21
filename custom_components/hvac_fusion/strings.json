@@ -199,7 +199,7 @@
           "temp_sensor": "Room Temperature Sensor",
           "floor_area_sqft": "Floor Area (sq ft)",
           "ceiling_height_ft": "Ceiling Height (ft)",
-          "envelope_score": "Insulation & Air Sealing (0-10)",
+          "envelope_score": "Insulation & Air Sealing (1-10)",
           "thermal_mass": "Thermal Mass (1-5)",
           "priority": "Arbitration Priority (1-10)",
           "window_sensor": "Window / Door Sensor (Optional)",
@@ -217,9 +217,9 @@
         },
         "data_description": {
           "id": "Unique identifier for this space. Leave blank to auto-generate from the space name.",
-          "envelope_score": "How well this room holds heat (0 = uninsulated & drafty, 5 = average, 10 = airtight Passive House).",
-          "thermal_mass": "How much heat the room's walls and floors absorb and hold (1 = lightweight & fast-changing, 5 = heavy masonry or concrete slab).",
-          "priority": "Determines arbitration winner when multiple mini-split indoor heads sharing one outdoor unit request conflicting modes (heating vs. cooling). Higher numbers win (e.g. Priority 6 beats Priority 2).",
+          "envelope_score": "How well-insulated and air-sealed this space is (1 = uninsulated & drafty, 3 = older/lightly insulated, 5 = average existing home, 7 = modern well-insulated, 10 = airtight Passive House).",
+          "thermal_mass": "How much heat this space's walls and floors retain (1 = lightweight & fast-changing, e.g. drywall/carpet; 3 = average wood/plaster; 5 = heavy masonry/concrete slab).",
+          "priority": "Higher number wins when spaces sharing an outdoor mini-split unit request conflicting modes (heating vs. cooling).",
           "shared_boiler_role": "Select 'Independent' if this space has its own dedicated zone valve/thermostat. If multiple spaces share a single hydronic heating loop, set the space with the controlling wall thermostat to 'Primary', and spaces without thermostats to 'Secondary' (they receive passive heat when primary calls).",
           "window_sensor": "Optional binary sensor (door or window). When open, HVAC for this space will be paused.",
           "configure_primary_emitter": "Optionally attach the space's main heating or cooling emitter right away. You can add additional emitters or schedule presets anytime later from the space management menu.",
@@ -243,7 +243,7 @@
           "temp_sensor": "Room Temperature Sensor",
           "floor_area_sqft": "Floor Area (sq ft)",
           "ceiling_height_ft": "Ceiling Height (ft)",
-          "envelope_score": "Insulation & Air Sealing (0-10)",
+          "envelope_score": "Insulation & Air Sealing (1-10)",
           "thermal_mass": "Thermal Mass (1-5)",
           "priority": "Arbitration Priority (1-10)",
           "window_sensor": "Window / Door Sensor (Optional)",
@@ -252,9 +252,9 @@
           "delete_space": "Delete this space (including its emitters and presets)"
         },
         "data_description": {
-          "envelope_score": "How well this room holds heat (0 = uninsulated & drafty, 5 = average, 10 = airtight Passive House).",
-          "thermal_mass": "How much heat the room's walls and floors absorb and hold (1 = lightweight & fast-changing, 5 = heavy masonry or concrete slab).",
-          "priority": "Determines arbitration winner when multiple mini-split indoor heads sharing one outdoor unit request conflicting modes (heating vs. cooling). Higher numbers win (e.g. Priority 6 beats Priority 2).",
+          "envelope_score": "How well-insulated and air-sealed this space is (1 = uninsulated & drafty, 3 = older/lightly insulated, 5 = average existing home, 7 = modern well-insulated, 10 = airtight Passive House).",
+          "thermal_mass": "How much heat this space's walls and floors retain (1 = lightweight & fast-changing, e.g. drywall/carpet; 3 = average wood/plaster; 5 = heavy masonry/concrete slab).",
+          "priority": "Higher number wins when spaces sharing an outdoor mini-split unit request conflicting modes (heating vs. cooling).",
           "shared_boiler_role": "Select 'Independent' if this space has its own dedicated zone valve/thermostat. If multiple spaces share a single hydronic heating loop, set the space with the controlling wall thermostat to 'Primary', and spaces without thermostats to 'Secondary' (they receive passive heat when primary calls).",
           "window_sensor": "Optional binary sensor (door or window). When open, HVAC for this space will be paused.",
           "cancel": "Discard unsaved changes and return to the space management menu."

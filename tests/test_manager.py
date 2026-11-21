@@ -496,7 +496,7 @@ def test_build_topology_envelope_score_and_thermal_mass():
     space = topology.spaces[0]
     assert space.envelope_score == 10.0
     assert space.thermal_mass == 5
-    assert abs(space.ua_factor - 15.0) < 0.01
+    assert abs(space.ua_factor - 6.0) < 0.01
     assert abs(space.thermal_capacitance_btu_per_f - (1000.0 * 0.018 * 24.0)) < 0.01
 
 
