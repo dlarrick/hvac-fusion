@@ -65,60 +65,24 @@ from .profile_store import async_fetch_remote_index, normalize_profile_id
 _LOGGER = logging.getLogger(__name__)
 
 ENVELOPE_SCORE_OPTIONS: list[selector.SelectOptionDict] = [
-    {
-        "value": "1",
-        "label": "1 — Uninsulated & very drafty (uninsulated walls, single-pane windows, obvious drafts)",
-    },
-    {
-        "value": "2",
-        "label": "2 — Minimal insulation (uninsulated walls, single-pane or storm windows)",
-    },
-    {
-        "value": "3",
-        "label": "3 — Below average (thin or uninsulated walls, some attic insulation, noticeable drafts)",
-    },
-    {
-        "value": "4",
-        "label": "4 — Modest insulation (insulated attic, older walls or windows, mild drafts)",
-    },
-    {
-        "value": "5",
-        "label": "5 — Average (typical home with decent attic/wall insulation and double-pane windows)",
-    },
-    {
-        "value": "6",
-        "label": "6 — Good (1990s-2000s standard, well-insulated walls/attic, tight windows and doors)",
-    },
-    {
-        "value": "7",
-        "label": "7 — Very good (updated air sealing, thick attic insulation, quality double-pane windows)",
-    },
-    {
-        "value": "8",
-        "label": "8 — High performance (modern tight build, deep insulation, triple-pane windows)",
-    },
-    {
-        "value": "9",
-        "label": "9 — Near Passive House (continuous exterior insulation, very airtight)",
-    },
-    {
-        "value": "10",
-        "label": "10 — Passive House / Net Zero (airtight, super-insulated, virtually no drafts)",
-    },
+    {"value": "1", "label": "1 — Uninsulated & drafty"},
+    {"value": "2", "label": "2 — Very poor"},
+    {"value": "3", "label": "3 — Older / lightly insulated"},
+    {"value": "4", "label": "4 — Below average"},
+    {"value": "5", "label": "5 — Average existing home"},
+    {"value": "6", "label": "6 — Above average"},
+    {"value": "7", "label": "7 — Modern well-insulated"},
+    {"value": "8", "label": "8 — High performance"},
+    {"value": "9", "label": "9 — Near Passive House"},
+    {"value": "10", "label": "10 — Airtight Passive House"},
 ]
 
 THERMAL_MASS_OPTIONS: list[selector.SelectOptionDict] = [
-    {
-        "value": "1",
-        "label": "1 — Very Low (drywall & carpet; heats up and cools down quickly)",
-    },
-    {"value": "2", "label": "2 — Low (drywall & wood or laminate floors)"},
-    {"value": "3", "label": "3 — Medium (typical mixed walls & flooring)"},
-    {"value": "4", "label": "4 — High (plaster walls, solid hardwood, or tile)"},
-    {
-        "value": "5",
-        "label": "5 — Very High (concrete/radiant slab, brick, or stone; slow to warm and slow to cool)",
-    },
+    {"value": "1", "label": "1 — Lightweight & fast-changing (drywall/carpet)"},
+    {"value": "2", "label": "2 — Low"},
+    {"value": "3", "label": "3 — Average (wood/plaster)"},
+    {"value": "4", "label": "4 — High"},
+    {"value": "5", "label": "5 — Heavy (masonry/concrete slab)"},
 ]
 
 
