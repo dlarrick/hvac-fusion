@@ -68,15 +68,6 @@ hvac-fusion/
 │           ├── colors.ts             # Preset mode color scheme mapping
 │           └── time.ts               # Time conversion, quantization, and formatting helpers
 ├── hacs.json                         # HACS integration metadata
-├── plans/                            # Planning, session handover, and design documents (see plans/INDEX.md)
-│   ├── INDEX.md                      # Index of all planning, architecture, and session continuity files
-│   ├── HANDOVER.md                   # Transient handover notes and immediate context (updated every session)
-│   ├── history.md                    # Chronological development log & historical notes (updated every session)
-│   ├── roadmap_and_backlog.md        # Prioritized bug tracker and feature backlog (updated every session)
-│   ├── agentic_climate_supervisor.md # Tier 3 LLM/agent supervisor architectural vision
-│   ├── condensing_boiler_modeling_plan.md # Modulating-condensing return water estimation plan
-│   ├── ha_gui_config_design.md       # Home Assistant GUI config design & 3-tier confidence ladder
-│   └── profiles_re_work.md           # Producer profile generalization design
 ├── pytest.ini                        # Pytest runner configuration
 ├── requirements-test.txt             # Test runner dependencies (pytest, pytest-homeassistant-custom-component)
 └── tests/                            # Integration test suite
@@ -176,18 +167,3 @@ pre-commit run --all-files
 * `hvac-crossover` is installed in editable mode (`pip install -e ../hvac-crossover`) inside `./venv`.
 * Changes made in `hvac-crossover` take effect immediately in `hvac-fusion` tests.
 * When updating versions, bump `pyproject.toml` and `hvac_crossover/__init__.py` in `hvac-crossover`, and update `"requirements": ["hvac-crossover==x.y.z"]` in `custom_components/hvac_fusion/manifest.json`.
-
----
-
-## 4. Session Continuity & Documentation Lifecycle
-
-Every AI session must maintain and update four core files:
-
-| File | Type | Lifecycle & Purpose |
-| :--- | :--- | :--- |
-| [`plans/HANDOVER.md`](plans/HANDOVER.md) | Transient | **Immediate session handover:** Current state, recent changes, in-flight work, active gotchas, and environment notes. A new session reads this first. |
-| [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md) | Permanent | **Permanent architecture & layout:** Comprehensive map of repository files, component responsibilities, and dev workflows. Enables sessions to hit the ground running without excessive exploration. |
-| [`plans/history.md`](plans/history.md) | Permanent | **Chronological history:** Record of work done, architectural decisions, discussions, and historical context across development sessions. |
-| [`plans/roadmap_and_backlog.md`](plans/roadmap_and_backlog.md) | Living Backlog | **Poor-man's ticketing system:** Prioritized bugs (Priority 1), near-term features (Priority 2), and future backlog items. |
-
-For a complete index of all architectural proposals, design specifications, and implementation references, see [`plans/INDEX.md`](plans/INDEX.md).

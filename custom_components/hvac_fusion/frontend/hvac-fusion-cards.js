@@ -3536,6 +3536,20 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
     };
     this.selectedDayIndex = ((/* @__PURE__ */ new Date()).getDay() + 6) % 7;
     this.diagnosticsExpanded = false;
+    this._lastTodayIndex = ((/* @__PURE__ */ new Date()).getDay() + 6) % 7;
+    this._handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        this._checkDayRollover();
+        this.requestUpdate();
+      }
+    };
+  }
+  _checkDayRollover() {
+    const currentTodayIndex = ((/* @__PURE__ */ new Date()).getDay() + 6) % 7;
+    if (currentTodayIndex !== this._lastTodayIndex) {
+      this._lastTodayIndex = currentTodayIndex;
+      this.selectedDayIndex = currentTodayIndex;
+    }
   }
   static async getConfigElement() {
     return document.createElement("hvac-fusion-status-editor");
@@ -3555,7 +3569,14 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
   connectedCallback() {
     var _a2;
     super.connectedCallback();
-    this._timer = setInterval(() => this.requestUpdate(), 3e4);
+    this._checkDayRollover();
+    this._timer = setInterval(() => {
+      this._checkDayRollover();
+      this.requestUpdate();
+    }, 3e4);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this._handleVisibilityChange);
+    }
     this._unsubscribeSync = subscribeScheduleUpdates(() => {
       this.refreshSchedules(true);
     });
@@ -3567,6 +3588,9 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
     super.disconnectedCallback();
     if (this._timer) clearInterval(this._timer);
     if (this._unsubscribeSync) this._unsubscribeSync();
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this._handleVisibilityChange);
+    }
   }
   setConfig(config) {
     if (!config) throw new Error("Invalid configuration");
@@ -3719,10 +3743,12 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
                   ${dayBlocks.map((block) => {
       const left = block.startMinutes / 1440 * 100;
       const width = (block.endMinutes - block.startMinutes) / 1440 * 100;
+      const timeRange = `${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)}`;
+      const tooltip = block.isGeneric ? `Non-Climate Block: No HVAC targets (${timeRange})` : block.hvac_mode === "heat_cool" ? `Dual: Heat ${block.heat_to}°, Cool ${block.cool_to}° (${timeRange})` : block.hvac_mode === "heat" ? `Heat: ${block.heat_to}° (${timeRange})` : block.hvac_mode === "cool" ? `Cool: ${block.cool_to}° (${timeRange})` : `Off (${timeRange})`;
       if (block.hvac_mode === "heat_cool") {
         const isWide = block.endMinutes - block.startMinutes >= 180;
         return b`
-                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="dual-band ${isWide ? "side-by-side" : ""}">
                             <div class="band-half" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
                               ${block.cool_to}°
@@ -3735,7 +3761,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
                       `;
       } else if (block.hvac_mode === "heat") {
         return b`
-                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: ${getHeatColor(block.heat_to)}; color: ${getHeatTextColor(block.heat_to)};">
                             ${block.heat_to}°
                           </div>
@@ -3743,7 +3769,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
                       `;
       } else if (block.hvac_mode === "cool") {
         return b`
-                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
                             ${block.cool_to}°
                           </div>
@@ -3751,7 +3777,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
                       `;
       } else {
         return b`
-                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: #334155; color: #94a3b8;">
                             OFF
                           </div>
@@ -3857,7 +3883,9 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
       pills.push(pill("System Phase", label));
     }
     if (this.shouldShowAttribute("active_producer")) {
-      pills.push(pill("Active Producer", attrs.active_producer || "None (Idle)"));
+      const producers = Array.isArray(attrs.active_producers) ? attrs.active_producers : attrs.active_producer ? String(attrs.active_producer).split(",").map((p2) => p2.trim()).filter(Boolean) : [];
+      const label = producers.length > 1 ? "Active Producers" : "Active Producer";
+      pills.push(pill(label, producers.length > 0 ? producers.join(", ") : "None (Idle)"));
     }
     if (this.shouldShowAttribute("economic_crossover_temp")) {
       const xover = attrs.economic_crossover_temp;
@@ -4017,7 +4045,7 @@ _HvacFusionStatusCard.styles = i$3`
       justify-content: center;
       padding: 1px;
       box-sizing: border-box;
-      pointer-events: none;
+      cursor: default;
     }
 
     .dual-band {
@@ -4705,8 +4733,13 @@ let HvacFusionSystemCard = class extends i {
     return num < 0 ? `-$${abs}` : `$${abs}`;
   }
   formatRate(val) {
-    const formatted = this.formatCurrency(val, 2);
-    return formatted === "—" ? "—" : `${formatted}/h`;
+    const num = Number(val);
+    if (val === null || val === void 0 || Number.isNaN(num)) {
+      return "—";
+    }
+    const absNum = Math.abs(num);
+    const decimals = absNum > 0 && absNum < 0.1 ? 3 : 2;
+    return `${this.formatCurrency(num, decimals)}/h`;
   }
   shouldShowAttribute(attrKey) {
     const list = this.config.diagnostic_attributes || DEFAULT_SYSTEM_DIAGNOSTICS;

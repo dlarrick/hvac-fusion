@@ -236,6 +236,7 @@ class HvacFusionManager:
                 self.schedule_entities.add(sched_id)
 
         self._schedule_locks: dict[str, float] = {}
+        self._dynamic_schedule_unsubs: dict[str, Any] = {}
 
         self.cost_estimates: dict[str, float | None] = {
             "chosen_cost_per_hr": None,
@@ -1196,7 +1197,7 @@ class HvacFusionManager:
                         cycle_on_temp = (
                             max(off_threshold, mn) if mn is not None else off_threshold
                         )
-                        currently_on = self._cycling_state.get(e_id, False)
+                        currently_on = self._cycling_state.setdefault(e_id, False)
 
                         if not currently_on and curr_space_temp < on_threshold:
                             self._cycling_state[e_id] = True
@@ -1422,7 +1423,7 @@ class HvacFusionManager:
                                         blocking=True,
                                     )
                         else:
-                            currently_on = self._cycling_state.get(e_id, False)
+                            currently_on = self._cycling_state.setdefault(e_id, False)
 
                             if desired_mode == "heat":
                                 on_threshold = ideal_temp - self.cycling_band
@@ -1666,6 +1667,60 @@ class HvacFusionManager:
                                 blocking=True,
                             )
 
+    async def async_register_space_preset(
+        self, target: str, preset_name: str, schedule_entity: str
+    ) -> bool:
+        """Dynamically attach a schedule-backed preset to a managed space."""
+        if not preset_name or not schedule_entity:
+            return False
+
+        matched = False
+        for space_id, climate_entity in self.space_entities.items():
+            c_id = getattr(climate_entity, "entity_id", None)
+            if target in (space_id, c_id):
+                await climate_entity.async_register_preset(preset_name, schedule_entity)
+                matched = True
+
+        if matched and schedule_entity not in self.schedule_entities:
+            self.schedule_entities.add(schedule_entity)
+            from homeassistant.helpers.event import async_track_state_change_event
+
+            self._dynamic_schedule_unsubs[schedule_entity] = (
+                async_track_state_change_event(
+                    self.hass, [schedule_entity], self.async_handle_schedule_change
+                )
+            )
+        return matched
+
+    async def async_unregister_space_preset(
+        self, target: str, preset_name: str
+    ) -> bool:
+        """Dynamically detach a schedule-backed preset from a managed space."""
+        if not preset_name:
+            return False
+
+        matched = False
+        removed_schedules: set[str] = set()
+        for space_id, climate_entity in self.space_entities.items():
+            c_id = getattr(climate_entity, "entity_id", None)
+            if target in (space_id, c_id):
+                removed = await climate_entity.async_unregister_preset(preset_name)
+                if removed is not None:
+                    matched = True
+                    removed_schedules.add(removed)
+
+        for sched_eid in removed_schedules:
+            still_used = any(
+                sched_eid in getattr(ent, "_presets", {}).values()
+                for ent in self.space_entities.values()
+            )
+            if not still_used:
+                self.schedule_entities.discard(sched_eid)
+                if unsub := self._dynamic_schedule_unsubs.pop(sched_eid, None):
+                    unsub()
+
+        return matched
+
     async def async_handle_schedule_change(self, event: Any) -> None:
         """Handles schedule block transitions."""
         entity_id = event.data.get("entity_id")
@@ -1876,6 +1931,55 @@ def async_register_services(hass: HomeAssistant) -> None:
             handle_clear_boost,
         )
 
+    if not hass.services.has_service(DOMAIN, "register_space_preset"):
+
+        async def handle_register_space_preset(call: ServiceCall) -> None:
+            preset_name = str(call.data.get("preset_name", "")).strip()
+            schedule_entity = str(call.data.get("schedule_entity", "")).strip()
+            target_entities = call.data.get("entity_id")
+            if isinstance(target_entities, str):
+                target_entities = [target_entities]
+            elif target_entities is None:
+                target_entities = []
+
+            manager = get_manager(hass)
+            if not manager or not preset_name or not schedule_entity:
+                return
+
+            for target in target_entities:
+                await manager.async_register_space_preset(
+                    str(target), preset_name, schedule_entity
+                )
+
+        hass.services.async_register(
+            DOMAIN,
+            "register_space_preset",
+            handle_register_space_preset,
+        )
+
+    if not hass.services.has_service(DOMAIN, "unregister_space_preset"):
+
+        async def handle_unregister_space_preset(call: ServiceCall) -> None:
+            preset_name = str(call.data.get("preset_name", "")).strip()
+            target_entities = call.data.get("entity_id")
+            if isinstance(target_entities, str):
+                target_entities = [target_entities]
+            elif target_entities is None:
+                target_entities = []
+
+            manager = get_manager(hass)
+            if not manager or not preset_name:
+                return
+
+            for target in target_entities:
+                await manager.async_unregister_space_preset(str(target), preset_name)
+
+        hass.services.async_register(
+            DOMAIN,
+            "unregister_space_preset",
+            handle_unregister_space_preset,
+        )
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: config_entries.ConfigEntry
@@ -1956,6 +2060,11 @@ async def async_unload_entry(
         entry, unload_platforms
     )
     if unload_ok and DOMAIN in hass.data:
+        if manager is not None:
+            for unsub in getattr(manager, "_dynamic_schedule_unsubs", {}).values():
+                unsub()
+            if hasattr(manager, "_dynamic_schedule_unsubs"):
+                manager._dynamic_schedule_unsubs.clear()
         hass.data[DOMAIN].pop(entry.entry_id, None)
         hass.data[DOMAIN].pop("manager", None)
     return unload_ok

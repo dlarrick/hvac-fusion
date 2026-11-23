@@ -138,8 +138,13 @@ export class HvacFusionSystemCard extends LitElement {
   }
 
   private formatRate(val: any): string {
-    const formatted = this.formatCurrency(val, 2);
-    return formatted === '—' ? '—' : `${formatted}/h`;
+    const num = Number(val);
+    if (val === null || val === undefined || Number.isNaN(num)) {
+      return '—';
+    }
+    const absNum = Math.abs(num);
+    const decimals = absNum > 0 && absNum < 0.1 ? 3 : 2;
+    return `${this.formatCurrency(num, decimals)}/h`;
   }
 
   private shouldShowAttribute(attrKey: string): boolean {

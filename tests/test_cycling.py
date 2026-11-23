@@ -355,3 +355,49 @@ async def test_clearing_cycling_when_unclamped_or_inactive(mock_hass, basic_conf
 
     await manager._dispatch_subsidiary_commands(plan, dry_run=False)
     assert ms_e_id not in manager._cycling_state
+
+
+@pytest.mark.asyncio
+async def test_clamped_starting_in_off_phase_tracks_cycling_state(
+    mock_hass, basic_config
+):
+    """A newly clamped emitter starting above on_threshold still records cycling state (OFF)."""
+    manager = HvacFusionManager(mock_hass, basic_config)
+    ms_e_id = "living_room_heatpump_0"
+    manager.emitter_entity_map[ms_e_id] = "climate.lr_minisplit"
+    manager.emitter_types[ms_e_id] = "mini_split"
+
+    # Ideal = 62 (below min_temp = 64 -> clamped), space is 69 (well above on_threshold = 60)
+    def states_get(entity_id):
+        if entity_id == "sensor.lr_temp":
+            return make_state("69.0", {"current_temperature": 69.0})
+        if entity_id == "climate.lr_minisplit":
+            return make_state(
+                "heat", {"min_temp": 64.0, "max_temp": 86.0, "temperature": 69.0}
+            )
+        return None
+
+    mock_hass.states.get.side_effect = states_get
+
+    plan = MagicMock()
+    plan.producer_directives = {}
+    plan.space_directives = {
+        "living_room": SpaceDirective(
+            space_id="living_room",
+            action=LibHvacAction.IDLE,
+            hvac_mode=LibHvacMode.HEAT,
+            target_temp=62.0,
+            active_delivery_unit_ids=[ms_e_id],
+        )
+    }
+
+    await manager._dispatch_subsidiary_commands(plan, dry_run=False)
+
+    assert ms_e_id in manager._cycling_state
+    assert manager._cycling_state[ms_e_id] is False
+    mock_hass.services.async_call.assert_any_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": "climate.lr_minisplit", "hvac_mode": "off"},
+        blocking=True,
+    )

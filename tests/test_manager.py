@@ -730,3 +730,97 @@ async def test_heating_only_space_omits_cool_and_heat_cool_modes():
     cool_entity = HvacFusionSpaceClimate(manager, cooling_conf)
     assert cool_entity.hvac_modes == ["heat_cool", "heat", "cool", "off"]
     assert cool_entity.hvac_mode == "heat_cool"
+
+
+@pytest.mark.asyncio
+async def test_register_space_preset_and_restart_restore(hass: HomeAssistant) -> None:
+    """Verify hvac_fusion.register_space_preset attaches preset and restores pending Butler preset."""
+    from custom_components.hvac_fusion import (
+        DOMAIN,
+        HvacFusionManager,
+        async_register_services,
+    )
+    from custom_components.hvac_fusion.climate import HvacFusionSpaceClimate
+    from homeassistant.core import State
+
+    conf = {
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {CONF_ELECTRIC_COST_PER_KWH: 0.20},
+        CONF_PRODUCERS: {},
+        CONF_SPACES: [
+            {
+                CONF_ID: "living_room",
+                CONF_NAME: "Living Room",
+                CONF_TEMP_SENSOR: "sensor.living_room_temp",
+                CONF_PRESETS: {"Baseline": "schedule.lr_baseline"},
+                CONF_EMITTERS: [],
+            }
+        ],
+    }
+
+    manager = HvacFusionManager(hass, conf, entry_id="test_reg_preset")
+    await manager.async_init()
+    manager.async_evaluate = AsyncMock()
+    hass.data.setdefault(DOMAIN, {})["manager"] = manager
+    async_register_services(hass)
+
+    entity = HvacFusionSpaceClimate(manager, conf[CONF_SPACES][0])
+    entity.hass = hass
+    entity.entity_id = "climate.living_room_space"
+    entity.async_write_ha_state = MagicMock()
+    entity.async_get_last_state = AsyncMock(
+        return_value=State(
+            "climate.living_room_space",
+            "heat_cool",
+            {"preset_mode": "Butler"},
+        )
+    )
+    entity.async_get_last_extra_data = AsyncMock(return_value=None)
+    manager.register_space_entity("living_room", entity)
+
+    # Simulate startup before hvac_butler registers "Butler"
+    await entity.async_added_to_hass()
+    assert entity.preset_mode == "Baseline"
+    assert "Butler" not in entity.preset_modes
+
+    # Now hvac_butler calls hvac_fusion.register_space_preset
+    hass.states.async_set(
+        "schedule.living_room_butler",
+        "on",
+        {"data": {"hvac_mode": "heat_cool", "heat_to": 69, "cool_to": 75}},
+    )
+    await hass.services.async_call(
+        DOMAIN,
+        "register_space_preset",
+        {
+            "entity_id": "climate.living_room_space",
+            "preset_name": "Butler",
+            "schedule_entity": "schedule.living_room_butler",
+        },
+        blocking=True,
+    )
+
+    assert "Butler" in entity.preset_modes
+    assert (
+        entity.extra_state_attributes["presets"]["Butler"]
+        == "schedule.living_room_butler"
+    )
+    assert entity.preset_mode == "Butler"
+    assert entity.native_target_temperature_low == 69.0
+    assert "schedule.living_room_butler" in manager.schedule_entities
+
+    # Now unregister "Butler" -> falls back to "Baseline" and cleans up listener
+    await hass.services.async_call(
+        DOMAIN,
+        "unregister_space_preset",
+        {
+            "entity_id": "climate.living_room_space",
+            "preset_name": "Butler",
+        },
+        blocking=True,
+    )
+    assert "Butler" not in entity.preset_modes
+    assert "Butler" not in entity.extra_state_attributes["presets"]
+    assert entity.preset_mode == "Baseline"
+    assert "schedule.living_room_butler" not in manager.schedule_entities
+    assert manager._dynamic_schedule_unsubs == {}

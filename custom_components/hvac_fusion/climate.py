@@ -172,6 +172,7 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         self._attr_preset_mode = (
             next(iter(self._presets.keys())) if self._presets else PRESET_MANUAL
         )
+        self._pending_restored_preset: str | None = None
 
         self._target_temp_low = DEFAULT_HEAT_TO
         self._target_temp_high = DEFAULT_COOL_TO
@@ -186,6 +187,7 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
 
         self._active_delivery_units: list[str] = []
         self._active_producer: str | None = None
+        self._active_producers: list[str] = []
         self._plan_explanation: str | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -197,6 +199,10 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             last_preset = last_state.attributes.get(ATTR_PRESET_MODE)
             if last_preset and last_preset in self._attr_preset_modes:
                 self._attr_preset_mode = last_preset
+            elif last_preset and last_preset != PRESET_MANUAL:
+                # Preserve externally-registered preset name (e.g. "Butler") until
+                # the companion integration registers it after startup.
+                self._pending_restored_preset = last_preset
 
             if last_state.state in self._attr_hvac_modes:
                 self._attr_hvac_mode = HVACMode(last_state.state)
@@ -493,6 +499,7 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
             "active_delivery_units": self._active_delivery_units,
             "cycling_emitters": cycling_emitters,
             "active_producer": self._active_producer,
+            "active_producers": self._active_producers,
             "economic_crossover_temp": space_xover,
             "window_open": window_open,
             "phase": phase,
@@ -603,8 +610,9 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         """Updates internal status from the coordinator evaluation."""
         if not directive:
             self._attr_hvac_action = HVACAction.OFF
-            self._active_delivery_units = None
+            self._active_delivery_units = []
             self._active_producer = None
+            self._active_producers = []
             return
 
         if directive.action == HvacAction.HEATING:
@@ -616,9 +624,69 @@ class HvacFusionSpaceClimate(ClimateEntity, RestoreEntity):
         else:
             self._attr_hvac_action = HVACAction.IDLE
 
-        self._active_delivery_units = directive.active_delivery_unit_ids
-        self._active_producer = directive.active_producer_id
+        self._active_delivery_units = list(directive.active_delivery_unit_ids or [])
+        active_producers: list[str] = []
+        topology = getattr(self._manager, "topology", None)
+        if topology and self._active_delivery_units:
+            space = next(
+                (s for s in getattr(topology, "spaces", []) if s.id == self._space_id),
+                None,
+            )
+            if space is not None:
+                active_unit_set = set(self._active_delivery_units)
+                for emitter in space.emitters:
+                    if emitter.id in active_unit_set:
+                        p_id = getattr(emitter, "producer_id", None)
+                        if p_id and p_id not in active_producers:
+                            active_producers.append(p_id)
+        if not active_producers and directive.active_producer_id:
+            active_producers.append(directive.active_producer_id)
+        self._active_producers = active_producers
+        self._active_producer = (
+            ", ".join(active_producers) if active_producers else None
+        )
         self._plan_explanation = directive.explanation
+
+    async def async_register_preset(
+        self, preset_name: str, schedule_entity: str
+    ) -> None:
+        """Dynamically register or update a schedule-backed preset on this space."""
+        self._presets[preset_name] = schedule_entity
+        if preset_name not in self._attr_preset_modes:
+            self._attr_preset_modes = [PRESET_MANUAL] + list(self._presets.keys())
+
+        if self._pending_restored_preset == preset_name:
+            self._attr_preset_mode = preset_name
+            self._pending_restored_preset = None
+            await self.async_update_from_schedule()
+            if getattr(self, "hass", None) is not None:
+                self.async_write_ha_state()
+            await self._manager.async_evaluate()
+            return
+
+        if getattr(self, "hass", None) is not None:
+            self.async_write_ha_state()
+
+    async def async_unregister_preset(self, preset_name: str) -> str | None:
+        """Dynamically remove a schedule-backed preset from this space."""
+        removed_schedule = self._presets.pop(preset_name, None)
+        if removed_schedule is None and preset_name not in self._attr_preset_modes:
+            return None
+
+        self._attr_preset_modes = [PRESET_MANUAL] + list(self._presets.keys())
+        switched = False
+        if self._attr_preset_mode == preset_name:
+            self._attr_preset_mode = (
+                next(iter(self._presets.keys())) if self._presets else PRESET_MANUAL
+            )
+            switched = True
+            await self.async_update_from_schedule()
+
+        if getattr(self, "hass", None) is not None:
+            self.async_write_ha_state()
+        if switched:
+            await self._manager.async_evaluate()
+        return removed_schedule
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Handle preset selection."""

@@ -52,8 +52,23 @@ export class HvacFusionStatusCard extends LitElement {
   @state() private selectedDayIndex = (new Date().getDay() + 6) % 7; // Monday = 0
   @state() private diagnosticsExpanded = false;
 
+  private _lastTodayIndex = (new Date().getDay() + 6) % 7;
   private _timer?: ReturnType<typeof setInterval>;
   private _unsubscribeSync?: () => void;
+  private _handleVisibilityChange = () => {
+    if (typeof document !== 'undefined' && !document.hidden) {
+      this._checkDayRollover();
+      this.requestUpdate();
+    }
+  };
+
+  private _checkDayRollover() {
+    const currentTodayIndex = (new Date().getDay() + 6) % 7;
+    if (currentTodayIndex !== this._lastTodayIndex) {
+      this._lastTodayIndex = currentTodayIndex;
+      this.selectedDayIndex = currentTodayIndex;
+    }
+  }
 
   public static async getConfigElement(): Promise<HTMLElement> {
     return document.createElement('hvac-fusion-status-editor');
@@ -74,8 +89,16 @@ export class HvacFusionStatusCard extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    // Update 'NOW' needle position every 30 seconds
-    this._timer = setInterval(() => this.requestUpdate(), 30000);
+    this._checkDayRollover();
+    // Update 'NOW' needle position and check for midnight day rollover every 30 seconds
+    this._timer = setInterval(() => {
+      this._checkDayRollover();
+      this.requestUpdate();
+    }, 30000);
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this._handleVisibilityChange);
+    }
 
     // Subscribe to cross-card schedule updates
     this._unsubscribeSync = subscribeScheduleUpdates(() => {
@@ -91,6 +114,9 @@ export class HvacFusionStatusCard extends LitElement {
     super.disconnectedCallback();
     if (this._timer) clearInterval(this._timer);
     if (this._unsubscribeSync) this._unsubscribeSync();
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this._handleVisibilityChange);
+    }
   }
 
   public setConfig(config: StatusCardConfig) {
@@ -328,7 +354,7 @@ export class HvacFusionStatusCard extends LitElement {
       justify-content: center;
       padding: 1px;
       box-sizing: border-box;
-      pointer-events: none;
+      cursor: default;
     }
 
     .dual-band {
@@ -684,11 +710,21 @@ export class HvacFusionStatusCard extends LitElement {
                   ${dayBlocks.map((block) => {
                     const left = (block.startMinutes / 1440) * 100;
                     const width = ((block.endMinutes - block.startMinutes) / 1440) * 100;
+                    const timeRange = `${formatTimeDisplay(block.startMinutes)} – ${formatTimeDisplay(block.endMinutes)}`;
+                    const tooltip = block.isGeneric
+                      ? `Non-Climate Block: No HVAC targets (${timeRange})`
+                      : block.hvac_mode === 'heat_cool'
+                      ? `Dual: Heat ${block.heat_to}°, Cool ${block.cool_to}° (${timeRange})`
+                      : block.hvac_mode === 'heat'
+                      ? `Heat: ${block.heat_to}° (${timeRange})`
+                      : block.hvac_mode === 'cool'
+                      ? `Cool: ${block.cool_to}° (${timeRange})`
+                      : `Off (${timeRange})`;
 
                     if (block.hvac_mode === 'heat_cool') {
                       const isWide = block.endMinutes - block.startMinutes >= 180;
                       return html`
-                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="dual-band ${isWide ? 'side-by-side' : ''}">
                             <div class="band-half" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
                               ${block.cool_to}°
@@ -701,7 +737,7 @@ export class HvacFusionStatusCard extends LitElement {
                       `;
                     } else if (block.hvac_mode === 'heat') {
                       return html`
-                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: ${getHeatColor(block.heat_to)}; color: ${getHeatTextColor(block.heat_to)};">
                             ${block.heat_to}°
                           </div>
@@ -709,7 +745,7 @@ export class HvacFusionStatusCard extends LitElement {
                       `;
                     } else if (block.hvac_mode === 'cool') {
                       return html`
-                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
                             ${block.cool_to}°
                           </div>
@@ -717,7 +753,7 @@ export class HvacFusionStatusCard extends LitElement {
                       `;
                     } else {
                       return html`
-                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;">
+                        <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: #334155; color: #94a3b8;">
                             OFF
                           </div>
@@ -838,7 +874,16 @@ export class HvacFusionStatusCard extends LitElement {
     }
 
     if (this.shouldShowAttribute('active_producer')) {
-      pills.push(pill('Active Producer', attrs.active_producer || 'None (Idle)'));
+      const producers: string[] = Array.isArray(attrs.active_producers)
+        ? attrs.active_producers
+        : attrs.active_producer
+        ? String(attrs.active_producer)
+            .split(',')
+            .map((p: string) => p.trim())
+            .filter(Boolean)
+        : [];
+      const label = producers.length > 1 ? 'Active Producers' : 'Active Producer';
+      pills.push(pill(label, producers.length > 0 ? producers.join(', ') : 'None (Idle)'));
     }
 
     if (this.shouldShowAttribute('economic_crossover_temp')) {

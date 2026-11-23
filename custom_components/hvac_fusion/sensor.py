@@ -271,12 +271,17 @@ class HvacFusionProducerSensor(HvacFusionSensorBase):
             if p_dir and p_dir.active_zones:
                 active_spaces = list(p_dir.active_zones)
             for s_id, s_dir in self.manager.last_plan.space_directives.items():
-                if s_dir.active_producer_id == self.producer.id:
+                matching_units = [
+                    u_id
+                    for u_id in s_dir.active_delivery_unit_ids
+                    if u_id in producer_delivery_unit_ids
+                ]
+                if s_dir.active_producer_id == self.producer.id or (
+                    p_dir is not None and p_dir.is_active and matching_units
+                ):
                     if s_id not in active_spaces:
                         active_spaces.append(s_id)
-                    for u_id in s_dir.active_delivery_unit_ids:
-                        if u_id in producer_delivery_unit_ids:
-                            active_delivery_units.append(u_id)
+                    active_delivery_units.extend(matching_units)
 
         attrs["active_spaces"] = sorted(active_spaces)
         attrs["active_delivery_units"] = sorted(set(active_delivery_units))
@@ -377,7 +382,7 @@ class HvacFusionEstimatedCostRateSensor(HvacFusionSensorBase):
             "savings_vs_heat_pump_per_hr": est.get("savings_vs_heat_pump_per_hr"),
             "total_heat_loss_btu_per_hr": est.get("total_heat_loss_btu_per_hr"),
             "cumulative_estimated_cost": round(
-                self.manager.cumulative_estimated_cost, 2
+                self.manager.cumulative_estimated_cost, 3
             ),
         }
 
@@ -389,7 +394,7 @@ class HvacFusionEstimatedSavingsSensor(HvacFusionSensorBase, RestoreEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "USD"
-    _attr_suggested_display_precision = 2
+    _attr_suggested_display_precision = 3
 
     def __init__(self, manager: Any) -> None:
         """Initialize sensor."""
@@ -429,7 +434,7 @@ class HvacFusionEstimatedSavingsSensor(HvacFusionSensorBase, RestoreEntity):
     @property
     def native_value(self) -> float:
         """Return cumulative estimated savings vs fossil-fuel-only baseline in USD."""
-        return round(self.manager.cumulative_savings_vs_fossil_fuel, 2)
+        return round(self.manager.cumulative_savings_vs_fossil_fuel, 3)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -437,21 +442,21 @@ class HvacFusionEstimatedSavingsSensor(HvacFusionSensorBase, RestoreEntity):
         est = self.manager.cost_estimates
         return {
             "savings_vs_fossil_fuel_total": round(
-                self.manager.cumulative_savings_vs_fossil_fuel, 2
+                self.manager.cumulative_savings_vs_fossil_fuel, 3
             ),
             "savings_vs_heat_pump_total": round(
-                self.manager.cumulative_savings_vs_heat_pump, 2
+                self.manager.cumulative_savings_vs_heat_pump, 3
             ),
             "savings_vs_fossil_fuel_per_hr": est.get("savings_vs_fossil_fuel_per_hr"),
             "savings_vs_heat_pump_per_hr": est.get("savings_vs_heat_pump_per_hr"),
             "cumulative_estimated_cost": round(
-                self.manager.cumulative_estimated_cost, 2
+                self.manager.cumulative_estimated_cost, 3
             ),
             "cumulative_fossil_fuel_baseline_cost": round(
-                self.manager.cumulative_fossil_fuel_baseline_cost, 2
+                self.manager.cumulative_fossil_fuel_baseline_cost, 3
             ),
             "cumulative_heat_pump_baseline_cost": round(
-                self.manager.cumulative_heat_pump_baseline_cost, 2
+                self.manager.cumulative_heat_pump_baseline_cost, 3
             ),
             "note": "Estimate based on space envelope heat-loss model and equipment profiles",
         }
@@ -464,7 +469,7 @@ class HvacFusionCumulativeCostMatrixSensor(HvacFusionSensorBase):
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "USD"
-    _attr_suggested_display_precision = 2
+    _attr_suggested_display_precision = 3
 
     def __init__(self, manager: Any, key: str, name: str, manager_attr: str) -> None:
         """Initialize opt-in cumulative matrix sensor."""
@@ -480,7 +485,7 @@ class HvacFusionCumulativeCostMatrixSensor(HvacFusionSensorBase):
     @property
     def native_value(self) -> float:
         """Return cumulative USD value from manager."""
-        return round(float(getattr(self.manager, self._manager_attr, 0.0)), 2)
+        return round(float(getattr(self.manager, self._manager_attr, 0.0)), 3)
 
 
 class HvacFusionRateMatrixSensor(HvacFusionSensorBase):
