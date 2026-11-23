@@ -92,3 +92,43 @@ clear_comfort_boost:
     entity:
       integration: hvac_fusion
       domain: climate
+
+register_space_preset:
+  name: Register Space Preset
+  description: Dynamically attaches a native schedule entity as a preset on a space climate entity (used by companion supervisors such as HVAC Butler).
+  target:
+    entity:
+      integration: hvac_fusion
+      domain: climate
+  fields:
+    preset_name:
+      name: Preset Name
+      description: Name of the preset mode to register on the space (e.g. Butler).
+      required: true
+      example: Butler
+      selector:
+        text:
+    schedule_entity:
+      name: Schedule Entity
+      description: Native Home Assistant schedule entity backing this preset.
+      required: true
+      example: schedule.living_room_butler
+      selector:
+        entity:
+          domain: schedule
+
+unregister_space_preset:
+  name: Unregister Space Preset
+  description: Dynamically removes a schedule-backed preset from a space climate entity and falls back safely if it was active.
+  target:
+    entity:
+      integration: hvac_fusion
+      domain: climate
+  fields:
+    preset_name:
+      name: Preset Name
+      description: Name of the preset mode to remove from the space (e.g. Butler).
+      required: true
+      example: Butler
+      selector:
+        text:

@@ -837,3 +837,117 @@ async def test_cost_estimates_not_calling_overshoot_and_thermal_mass_pullup(
     await manager.async_evaluate()
     assert manager.cost_estimates["total_heat_loss_btu_per_hr"] == 0.0
     assert manager.cost_estimates["chosen_cost_per_hr"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_cumulative_cost_sensors_tenth_cent_rounding(hass: HomeAssistant) -> None:
+    """Verify cumulative cost and savings sensors round to 1/10 cent (3 decimal places)."""
+    manager = MagicMock(spec=HvacFusionManager)
+    manager.entry_id = "test_precision"
+    manager.conf = {CONF_NAME: "HVAC Fusion"}
+    manager.cost_estimates = {
+        "chosen_cost_per_hr": 0.0425,
+        "savings_vs_fossil_fuel_per_hr": 0.0135,
+        "savings_vs_heat_pump_per_hr": 0.0,
+    }
+    manager.cumulative_estimated_cost = 1.2346
+    manager.cumulative_savings_vs_fossil_fuel = 0.0567
+    manager.cumulative_savings_vs_heat_pump = 0.0123
+    manager.cumulative_fossil_fuel_baseline_cost = 1.2913
+    manager.cumulative_heat_pump_baseline_cost = 1.2469
+    manager.register_sensor_entity = MagicMock()
+
+    sensors = _build_cost_sensors(manager)
+    rate_sensor = next(
+        s for s in sensors if isinstance(s, HvacFusionEstimatedCostRateSensor)
+    )
+    savings_sensor = next(
+        s for s in sensors if isinstance(s, HvacFusionEstimatedSavingsSensor)
+    )
+    heating_cost_sensor = next(
+        s for s in sensors if s.unique_id == "test_precision_estimated_heating_cost"
+    )
+
+    assert rate_sensor.extra_state_attributes["cumulative_estimated_cost"] == 1.235
+    assert savings_sensor.native_value == 0.057
+    assert savings_sensor.suggested_display_precision == 3
+    assert savings_sensor.extra_state_attributes["cumulative_estimated_cost"] == 1.235
+    assert savings_sensor.extra_state_attributes["savings_vs_heat_pump_total"] == 0.012
+    assert heating_cost_sensor.native_value == 1.235
+    assert heating_cost_sensor.suggested_display_precision == 3
+
+
+@pytest.mark.asyncio
+async def test_multi_producer_space_climate_and_producer_sensors(
+    hass: HomeAssistant,
+) -> None:
+    """Verify spaces supplied by multiple heat pumps expose all active producers."""
+    from custom_components.hvac_fusion.climate import HvacFusionSpaceClimate
+
+    hass.states.async_set("sensor.outdoor_temp", "45.0")
+    hass.states.async_set("sensor.great_room_temp", "65.0")
+
+    conf = {
+        CONF_NAME: "Dual HP System",
+        CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+        CONF_TARIFFS: {
+            CONF_ELECTRIC_COST_PER_KWH: 0.20,
+            CONF_GAS_COST_PER_THERM: 2.00,
+        },
+        CONF_PRODUCERS: {
+            "hp1": {
+                CONF_NAME: "ODU 1",
+                CONF_TYPE: "inverter_heat_pump",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+            },
+            "hp2": {
+                CONF_NAME: "ODU 2",
+                CONF_TYPE: "inverter_heat_pump",
+                CONF_PROFILE: "generic/cold_climate_heat_pump.json",
+            },
+        },
+        CONF_SPACES: [
+            {
+                CONF_ID: "great_room",
+                CONF_NAME: "Great Room",
+                CONF_TEMP_SENSOR: "sensor.great_room_temp",
+                CONF_EMITTERS: [
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp1",
+                        CONF_NOMINAL_BTU: 12000.0,
+                    },
+                    {
+                        CONF_TYPE: "mini_split",
+                        CONF_PRODUCER: "hp2",
+                        CONF_NOMINAL_BTU: 12000.0,
+                    },
+                ],
+            }
+        ],
+    }
+
+    manager = HvacFusionManager(hass, conf, entry_id="test_dual_hp")
+    await manager.async_init()
+
+    space_entity = HvacFusionSpaceClimate(manager, conf[CONF_SPACES][0])
+    manager.register_space_entity("great_room", space_entity)
+
+    await manager.async_evaluate()
+
+    attrs = space_entity.extra_state_attributes
+    assert attrs["active_producers"] == ["hp1", "hp2"]
+    assert attrs["active_producer"] == "hp1, hp2"
+
+    producers_by_id = {p.id: p for p in manager.topology.producers}
+    hp1_sensor = HvacFusionProducerSensor(manager, producers_by_id["hp1"])
+    hp2_sensor = HvacFusionProducerSensor(manager, producers_by_id["hp2"])
+
+    assert hp1_sensor.extra_state_attributes["active_spaces"] == ["great_room"]
+    assert hp1_sensor.extra_state_attributes["active_delivery_units"] == [
+        "great_room_hp1_0"
+    ]
+    assert hp2_sensor.extra_state_attributes["active_spaces"] == ["great_room"]
+    assert hp2_sensor.extra_state_attributes["active_delivery_units"] == [
+        "great_room_hp2_1"
+    ]
