@@ -137,14 +137,20 @@ export class HvacFusionSystemCard extends LitElement {
     return num < 0 ? `-$${abs}` : `$${abs}`;
   }
 
-  private formatRate(val: any): string {
+  private formatRate(val: any) {
     const num = Number(val);
     if (val === null || val === undefined || Number.isNaN(num)) {
       return '—';
     }
+    const sign = num < 0 ? '-' : '';
     const absNum = Math.abs(num);
-    const decimals = absNum > 0 && absNum < 0.1 ? 3 : 2;
-    return `${this.formatCurrency(num, decimals)}/h`;
+    if (absNum > 0 && absNum < 0.1) {
+      const fixed = absNum.toFixed(3);
+      const main = fixed.slice(0, -1);
+      const tenth = fixed.slice(-1);
+      return html`${sign}$${main}<sup class="rate-tenth">${tenth}</sup>/h`;
+    }
+    return `${sign}$${absNum.toFixed(2)}/h`;
   }
 
   private shouldShowAttribute(attrKey: string): boolean {
@@ -300,6 +306,14 @@ export class HvacFusionSystemCard extends LitElement {
 
     .kpi-value.negative {
       color: #f87171;
+    }
+
+    .rate-tenth {
+      font-size: 0.65em;
+      vertical-align: 0.32em;
+      line-height: 0;
+      margin-left: 0.5px;
+      opacity: 0.9;
     }
 
     .kpi-sub {
