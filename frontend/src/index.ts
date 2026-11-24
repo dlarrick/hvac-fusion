@@ -82,17 +82,31 @@ export * from './types';
     'System-level overview with economic crossover, cost & baseline savings, producer states, and diagnostics.',
   preview: true,
   getEntitySuggestion: (hass: any, entityId: string) => {
-    const state = hass?.states?.[entityId];
-    if (
-      !entityId.startsWith('sensor.') ||
-      state?.attributes?.break_even_cop === undefined
-    ) {
+    const states = hass?.states || {};
+    const attrs = states[entityId]?.attributes;
+    if (!entityId.startsWith('sensor.') || !attrs) {
       return null;
     }
+    const isSystemOrProducer =
+      attrs.break_even_cop !== undefined ||
+      (attrs.producer_id !== undefined && attrs.producer_type !== undefined) ||
+      attrs.fossil_fuel_baseline_cost_per_hr !== undefined ||
+      attrs.savings_vs_fossil_fuel_total !== undefined;
+    if (!isSystemOrProducer) {
+      return null;
+    }
+    const primaryEntity =
+      attrs.break_even_cop !== undefined
+        ? entityId
+        : Object.keys(states).find(
+            (id) =>
+              id.startsWith('sensor.') &&
+              states[id]?.attributes?.break_even_cop !== undefined
+          ) || entityId;
     return {
       config: {
         type: 'custom:hvac-fusion-system-card',
-        entity: entityId
+        entity: primaryEntity
       }
     };
   }

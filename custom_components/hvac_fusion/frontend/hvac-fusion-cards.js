@@ -759,7 +759,12 @@ async function fetchScheduleList(hass) {
     const list = await hass.callWS({ type: "schedule/list" });
     if (list) {
       for (const item of list) {
-        lastKnownHashes.set(item.id, JSON.stringify(item));
+        const currentHash = JSON.stringify(item);
+        const prevHash = lastKnownHashes.get(item.id);
+        lastKnownHashes.set(item.id, currentHash);
+        if (prevHash && prevHash !== currentHash) {
+          notifyScheduleUpdated(item.id);
+        }
       }
     }
     return list || [];
@@ -1831,6 +1836,8 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
     this.dragAction = null;
     this.lastDragEndTime = 0;
     this._lastLoadedScheduleHash = "";
+    this._lastScheduleStatesSig = "";
+    this._hasInitialSync = false;
   }
   setConfig(config) {
     if (!config) {
@@ -1928,7 +1935,12 @@ const _SchedulePresetCard = class _SchedulePresetCard extends i {
   }
   willUpdate(changedProps) {
     if (changedProps.has("hass") && this.hass) {
-      this.syncFromHass();
+      const sig = Object.entries(this.hass.states).filter(([id]) => id.startsWith("schedule.")).map(([id, st]) => `${id}:${(st == null ? void 0 : st.last_updated) || ""}`).join("|");
+      if (!this._hasInitialSync || sig !== this._lastScheduleStatesSig) {
+        this._hasInitialSync = true;
+        this._lastScheduleStatesSig = sig;
+        this.syncFromHass();
+      }
     }
   }
   async syncFromHass(forceReload = false) {
@@ -3525,6 +3537,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
     this.isForeign = false;
     this.scheduleNotFound = false;
     this._lastLoadedScheduleHash = "";
+    this._lastScheduleStateUpdated = "";
     this.blocksByDay = {
       monday: [],
       tuesday: [],
@@ -3612,7 +3625,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
     }
   }
   async syncWithClimateEntity() {
-    var _a2;
+    var _a2, _b, _c;
     if (!this.hass || !((_a2 = this.config) == null ? void 0 : _a2.entity)) return;
     const stateObj = this.hass.states[this.config.entity];
     if (!stateObj) return;
@@ -3626,7 +3639,14 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
     }
     if (targetScheduleId && targetScheduleId !== this.activeScheduleId) {
       this.activeScheduleId = targetScheduleId;
+      this._lastScheduleStateUpdated = ((_b = this.hass.states[targetScheduleId]) == null ? void 0 : _b.last_updated) || "";
       await this.refreshSchedules(false);
+    } else if (this.activeScheduleId) {
+      const schedUpdated = ((_c = this.hass.states[this.activeScheduleId]) == null ? void 0 : _c.last_updated) || "";
+      if (schedUpdated && schedUpdated !== this._lastScheduleStateUpdated) {
+        this._lastScheduleStateUpdated = schedUpdated;
+        await this.refreshSchedules(true);
+      }
     }
   }
   async refreshSchedules(forceRefresh = false) {
@@ -4737,9 +4757,15 @@ let HvacFusionSystemCard = class extends i {
     if (val === null || val === void 0 || Number.isNaN(num)) {
       return "—";
     }
+    const sign = num < 0 ? "-" : "";
     const absNum = Math.abs(num);
-    const decimals = absNum > 0 && absNum < 0.1 ? 3 : 2;
-    return `${this.formatCurrency(num, decimals)}/h`;
+    if (absNum > 0 && absNum < 0.1) {
+      const fixed = absNum.toFixed(3);
+      const main = fixed.slice(0, -1);
+      const tenth = fixed.slice(-1);
+      return b`${sign}$${main}<sup class="rate-tenth">${tenth}</sup>/h`;
+    }
+    return `${sign}$${absNum.toFixed(2)}/h`;
   }
   shouldShowAttribute(attrKey) {
     const list = this.config.diagnostic_attributes || DEFAULT_SYSTEM_DIAGNOSTICS;
@@ -5126,6 +5152,14 @@ HvacFusionSystemCard.styles = i$3`
       color: #f87171;
     }
 
+    .rate-tenth {
+      font-size: 0.65em;
+      vertical-align: 0.32em;
+      line-height: 0;
+      margin-left: 0.5px;
+      opacity: 0.9;
+    }
+
     .kpi-sub {
       font-size: 0.7rem;
       color: var(--secondary-text-color, #94a3b8);
@@ -5351,15 +5385,26 @@ window.customCards.push({
   description: "System-level overview with economic crossover, cost & baseline savings, producer states, and diagnostics.",
   preview: true,
   getEntitySuggestion: (hass, entityId) => {
-    var _a2, _b;
-    const state = (_a2 = hass == null ? void 0 : hass.states) == null ? void 0 : _a2[entityId];
-    if (!entityId.startsWith("sensor.") || ((_b = state == null ? void 0 : state.attributes) == null ? void 0 : _b.break_even_cop) === void 0) {
+    var _a2;
+    const states = (hass == null ? void 0 : hass.states) || {};
+    const attrs = (_a2 = states[entityId]) == null ? void 0 : _a2.attributes;
+    if (!entityId.startsWith("sensor.") || !attrs) {
       return null;
     }
+    const isSystemOrProducer = attrs.break_even_cop !== void 0 || attrs.producer_id !== void 0 && attrs.producer_type !== void 0 || attrs.fossil_fuel_baseline_cost_per_hr !== void 0 || attrs.savings_vs_fossil_fuel_total !== void 0;
+    if (!isSystemOrProducer) {
+      return null;
+    }
+    const primaryEntity = attrs.break_even_cop !== void 0 ? entityId : Object.keys(states).find(
+      (id) => {
+        var _a3, _b;
+        return id.startsWith("sensor.") && ((_b = (_a3 = states[id]) == null ? void 0 : _a3.attributes) == null ? void 0 : _b.break_even_cop) !== void 0;
+      }
+    ) || entityId;
     return {
       config: {
         type: "custom:hvac-fusion-system-card",
-        entity: entityId
+        entity: primaryEntity
       }
     };
   }

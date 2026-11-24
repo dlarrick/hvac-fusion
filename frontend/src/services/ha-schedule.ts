@@ -127,7 +127,12 @@ export async function fetchScheduleList(hass: HomeAssistant): Promise<HASchedule
     const list = await hass.callWS<HAScheduleItem[]>({ type: 'schedule/list' });
     if (list) {
       for (const item of list) {
-        lastKnownHashes.set(item.id, JSON.stringify(item));
+        const currentHash = JSON.stringify(item);
+        const prevHash = lastKnownHashes.get(item.id);
+        lastKnownHashes.set(item.id, currentHash);
+        if (prevHash && prevHash !== currentHash) {
+          notifyScheduleUpdated(item.id);
+        }
       }
     }
     return list || [];

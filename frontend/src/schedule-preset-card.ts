@@ -71,6 +71,8 @@ export class SchedulePresetCard extends LitElement {
   private lastDragEndTime = 0;
   private _unsubscribeSync?: () => void;
   private _lastLoadedScheduleHash = '';
+  private _lastScheduleStatesSig = '';
+  private _hasInitialSync = false;
   private _heartbeatTimer?: ReturnType<typeof setInterval>;
 
   static styles = css`
@@ -696,7 +698,16 @@ export class SchedulePresetCard extends LitElement {
 
   public willUpdate(changedProps: PropertyValues) {
     if (changedProps.has('hass') && this.hass) {
-      this.syncFromHass();
+      // Only re-fetch schedule/list on initial mount or when a schedule.* entity's state changes
+      const sig = Object.entries(this.hass.states)
+        .filter(([id]) => id.startsWith('schedule.'))
+        .map(([id, st]) => `${id}:${st?.last_updated || ''}`)
+        .join('|');
+      if (!this._hasInitialSync || sig !== this._lastScheduleStatesSig) {
+        this._hasInitialSync = true;
+        this._lastScheduleStatesSig = sig;
+        this.syncFromHass();
+      }
     }
   }
 

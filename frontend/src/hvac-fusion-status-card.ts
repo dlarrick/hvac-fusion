@@ -38,6 +38,7 @@ export class HvacFusionStatusCard extends LitElement {
   @state() private isForeign = false;
   @state() private scheduleNotFound = false;
   private _lastLoadedScheduleHash = '';
+  private _lastScheduleStateUpdated = '';
 
   @state() private blocksByDay: Record<ScheduleDay, InternalBlock[]> = {
     monday: [],
@@ -159,7 +160,16 @@ export class HvacFusionStatusCard extends LitElement {
 
     if (targetScheduleId && targetScheduleId !== this.activeScheduleId) {
       this.activeScheduleId = targetScheduleId;
+      this._lastScheduleStateUpdated =
+        this.hass.states[targetScheduleId]?.last_updated || '';
       await this.refreshSchedules(false);
+    } else if (this.activeScheduleId) {
+      const schedUpdated =
+        this.hass.states[this.activeScheduleId]?.last_updated || '';
+      if (schedUpdated && schedUpdated !== this._lastScheduleStateUpdated) {
+        this._lastScheduleStateUpdated = schedUpdated;
+        await this.refreshSchedules(true);
+      }
     }
   }
 
