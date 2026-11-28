@@ -250,6 +250,16 @@ A dedicated status sensor is created for each piece of heating or cooling equipm
   * `estimated_efficiency`: Current estimated operating combustion efficiency based on load and return water temperature.
   * `condensing_state`: Flue gas condensing state (`condensing` vs. `dry`).
 
+### Cost & Baseline Savings Sensors
+Physics-based operating cost and savings estimates modeled from your space envelope, rated AFUE / heat-pump COP curves, outdoor temperature, and configured fuel/electric tariffs:
+* **`sensor.<coordinator_id>_estimated_heating_cost_rate` (`USD/h`):** Instantaneous estimated hourly heating cost rate for the currently chosen heat source(s), with attributes comparing against fossil-fuel-only and heat-pump-only baselines (`fossil_fuel_baseline_cost_per_hr`, `heat_pump_baseline_cost_per_hr`, `savings_vs_fossil_fuel_per_hr`, `savings_vs_heat_pump_per_hr`, `total_heat_loss_btu_per_hr`, `cumulative_estimated_cost`).
+* **`sensor.<coordinator_id>_estimated_savings_vs_fossil_fuel` (`USD`):** Cumulative estimated savings compared to running fossil fuel alone (persisted across restarts), with attributes for cumulative savings vs. heat-pump-only and cumulative baseline totals.
+* **Opt-In Matrix Sensors (disabled by default):** Six additional `USD/h` and cumulative `USD` sensors for tracking chosen cost, fossil-fuel baseline, heat-pump baseline, and savings vs. heat pump individually in Home Assistant Statistics Graphs and Utility Meters.
+
+## Companion Integration: [HVAC Butler](https://github.com/dlarrick/hvac-butler)
+
+Looking for weather- and occupancy-aware schedules that adapt automatically to real life? **[HVAC Butler](https://github.com/dlarrick/hvac-butler)** layers an attentive AI climate supervisor on top of HVAC Fusion (with strict non-AI safety guardrails)—automatically discovering your HVAC Fusion spaces, maintaining a `"Butler"` schedule preset for each room, and issuing temporary comfort boosts when occupancy or weather shifts.
+
 ## Acknowledgments & Attribution
 
 The visual presentation, dual-setpoint interaction, and weekly calendar layout in `schedule-preset-card` are adapted from and inspired by the excellent work of **[arozoire](https://github.com/arozoire)** in [`schedule_creator`](https://github.com/arozoire/schedule_creator) and `weekly-schedule-card` (MIT Licensed), re-engineered here to operate natively with Home Assistant's built-in `schedule.*` helper entities and Core WebSocket APIs.

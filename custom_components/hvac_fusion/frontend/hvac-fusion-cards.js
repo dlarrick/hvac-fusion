@@ -3601,6 +3601,11 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
     super.disconnectedCallback();
     if (this._timer) clearInterval(this._timer);
     if (this._unsubscribeSync) this._unsubscribeSync();
+    if (this._trackResizeObserver) {
+      this._trackResizeObserver.disconnect();
+      this._trackResizeObserver = void 0;
+      this._observedTrackEl = void 0;
+    }
     if (typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this._handleVisibilityChange);
     }
@@ -3622,6 +3627,35 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
   willUpdate(changedProps) {
     if (changedProps.has("hass") && this.hass) {
       this.syncWithClimateEntity();
+    }
+  }
+  updated() {
+    this._ensureTrackResizeObserver();
+    this._updateBandLabelVisibility();
+  }
+  _ensureTrackResizeObserver() {
+    if (typeof ResizeObserver === "undefined") return;
+    const trackEl = this.renderRoot.querySelector(".timeline-track-wrap");
+    if (trackEl === this._observedTrackEl) return;
+    if (this._trackResizeObserver) {
+      this._trackResizeObserver.disconnect();
+    }
+    this._observedTrackEl = trackEl ?? void 0;
+    if (trackEl) {
+      this._trackResizeObserver = new ResizeObserver(() => {
+        this._updateBandLabelVisibility();
+      });
+      this._trackResizeObserver.observe(trackEl);
+    }
+  }
+  _updateBandLabelVisibility() {
+    const bands = this.renderRoot.querySelectorAll(".band-half, .band-single");
+    for (const band of bands) {
+      const label = band.querySelector(".band-label");
+      if (!label) continue;
+      const availableWidth = band.clientWidth - 2;
+      const textWidth = label.getBoundingClientRect().width;
+      label.style.visibility = availableWidth > 0 && textWidth <= availableWidth ? "visible" : "hidden";
     }
   }
   async syncWithClimateEntity() {
@@ -3771,10 +3805,10 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="dual-band ${isWide ? "side-by-side" : ""}">
                             <div class="band-half" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
-                              ${block.cool_to}°
+                              <span class="band-label">${block.cool_to}°</span>
                             </div>
                             <div class="band-half" style="background: ${getHeatColor(block.heat_to)}; color: ${getHeatTextColor(block.heat_to)};">
-                              ${block.heat_to}°
+                              <span class="band-label">${block.heat_to}°</span>
                             </div>
                           </div>
                         </div>
@@ -3783,7 +3817,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
         return b`
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: ${getHeatColor(block.heat_to)}; color: ${getHeatTextColor(block.heat_to)};">
-                            ${block.heat_to}°
+                            <span class="band-label">${block.heat_to}°</span>
                           </div>
                         </div>
                       `;
@@ -3791,7 +3825,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
         return b`
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
-                            ${block.cool_to}°
+                            <span class="band-label">${block.cool_to}°</span>
                           </div>
                         </div>
                       `;
@@ -3799,7 +3833,7 @@ const _HvacFusionStatusCard = class _HvacFusionStatusCard extends i {
         return b`
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: #334155; color: #94a3b8;">
-                            OFF
+                            <span class="band-label">OFF</span>
                           </div>
                         </div>
                       `;
@@ -4095,6 +4129,7 @@ _HvacFusionStatusCard.styles = i$3`
       font-size: 0.7rem;
       font-weight: 700;
       line-height: 1;
+      overflow: hidden;
     }
 
     .band-single {
@@ -4108,6 +4143,11 @@ _HvacFusionStatusCard.styles = i$3`
       overflow: hidden;
       border: 1px solid rgba(255, 255, 255, 0.15);
       box-sizing: border-box;
+    }
+
+    .band-label {
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .now-needle {

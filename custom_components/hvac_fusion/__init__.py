@@ -1674,6 +1674,11 @@ class HvacFusionManager:
         if not preset_name or not schedule_entity:
             return False
 
+        dynamic_presets: dict[str, dict[str, str]] = self.hass.data.setdefault(
+            DOMAIN, {}
+        ).setdefault("dynamic_presets", {})
+        dynamic_presets.setdefault(target, {})[preset_name] = schedule_entity
+
         matched = False
         for space_id, climate_entity in self.space_entities.items():
             c_id = getattr(climate_entity, "entity_id", None)
@@ -1701,13 +1706,26 @@ class HvacFusionManager:
 
         matched = False
         removed_schedules: set[str] = set()
+        keys_to_clean: set[str] = {target}
         for space_id, climate_entity in self.space_entities.items():
             c_id = getattr(climate_entity, "entity_id", None)
             if target in (space_id, c_id):
+                keys_to_clean.add(space_id)
+                if c_id:
+                    keys_to_clean.add(c_id)
                 removed = await climate_entity.async_unregister_preset(preset_name)
                 if removed is not None:
                     matched = True
                     removed_schedules.add(removed)
+
+        dynamic_presets: dict[str, dict[str, str]] = self.hass.data.get(DOMAIN, {}).get(
+            "dynamic_presets", {}
+        )
+        for key in keys_to_clean:
+            if key in dynamic_presets:
+                dynamic_presets[key].pop(preset_name, None)
+                if not dynamic_presets[key]:
+                    dynamic_presets.pop(key, None)
 
         for sched_eid in removed_schedules:
             still_used = any(
@@ -1727,6 +1745,32 @@ class HvacFusionManager:
         for entity in self.space_entities.values():
             if getattr(entity, "active_schedule_entity", None) == entity_id:
                 await entity.async_update_from_schedule()
+        await self.async_evaluate()
+
+    @property
+    def window_sensor_entities(self) -> list[str]:
+        """Return deduplicated list of configured window/door sensor entity IDs."""
+        sensors: list[str] = []
+        seen: set[str] = set()
+        for space_conf in self.conf.get(CONF_SPACES, []):
+            if not isinstance(space_conf, dict):
+                continue
+            eid = space_conf.get(CONF_WINDOW_SENSOR)
+            if isinstance(eid, str) and eid and eid not in seen:
+                seen.add(eid)
+                sensors.append(eid)
+        return sensors
+
+    async def async_handle_window_sensor_change(self, event: Any) -> None:
+        """Trigger immediate re-evaluation when a window/door sensor opens or closes."""
+        old_state = event.data.get("old_state")
+        new_state = event.data.get("new_state")
+        if new_state is None:
+            return
+        new_val = str(new_state.state).lower()
+        old_val = str(old_state.state).lower() if old_state is not None else ""
+        if new_val not in ("on", "off") or new_val == old_val:
+            return
         await self.async_evaluate()
 
 
@@ -2005,6 +2049,16 @@ async def async_setup_entry(
     if manager.topology and manager.topology.spaces:
         await hass.config_entries.async_forward_entry_setups(entry, [Platform.CLIMATE])
 
+        # Replay any runtime-registered dynamic presets (e.g. from hvac_butler)
+        # so in-place config reloads do not drop active companion presets.
+        for target, presets in list(
+            hass.data[DOMAIN].get("dynamic_presets", {}).items()
+        ):
+            for preset_name, schedule_entity in list(presets.items()):
+                await manager.async_register_space_preset(
+                    target, preset_name, schedule_entity
+                )
+
     # Listen to schedule transitions
     if manager.schedule_entities:
         from homeassistant.helpers.event import async_track_state_change_event
@@ -2014,6 +2068,18 @@ async def async_setup_entry(
                 hass,
                 list(manager.schedule_entities),
                 manager.async_handle_schedule_change,
+            )
+        )
+
+    # Listen to window/door sensor open/close transitions for immediate interlock response
+    if manager.window_sensor_entities:
+        from homeassistant.helpers.event import async_track_state_change_event
+
+        entry.async_on_unload(
+            async_track_state_change_event(
+                hass,
+                manager.window_sensor_entities,
+                manager.async_handle_window_sensor_change,
             )
         )
 
