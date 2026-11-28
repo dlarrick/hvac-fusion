@@ -56,6 +56,8 @@ export class HvacFusionStatusCard extends LitElement {
   private _lastTodayIndex = (new Date().getDay() + 6) % 7;
   private _timer?: ReturnType<typeof setInterval>;
   private _unsubscribeSync?: () => void;
+  private _trackResizeObserver?: ResizeObserver;
+  private _observedTrackEl?: Element;
   private _handleVisibilityChange = () => {
     if (typeof document !== 'undefined' && !document.hidden) {
       this._checkDayRollover();
@@ -115,6 +117,11 @@ export class HvacFusionStatusCard extends LitElement {
     super.disconnectedCallback();
     if (this._timer) clearInterval(this._timer);
     if (this._unsubscribeSync) this._unsubscribeSync();
+    if (this._trackResizeObserver) {
+      this._trackResizeObserver.disconnect();
+      this._trackResizeObserver = undefined;
+      this._observedTrackEl = undefined;
+    }
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this._handleVisibilityChange);
     }
@@ -138,6 +145,39 @@ export class HvacFusionStatusCard extends LitElement {
   protected willUpdate(changedProps: PropertyValues) {
     if (changedProps.has('hass') && this.hass) {
       this.syncWithClimateEntity();
+    }
+  }
+
+  protected updated() {
+    this._ensureTrackResizeObserver();
+    this._updateBandLabelVisibility();
+  }
+
+  private _ensureTrackResizeObserver() {
+    if (typeof ResizeObserver === 'undefined') return;
+    const trackEl = this.renderRoot.querySelector('.timeline-track-wrap');
+    if (trackEl === this._observedTrackEl) return;
+    if (this._trackResizeObserver) {
+      this._trackResizeObserver.disconnect();
+    }
+    this._observedTrackEl = trackEl ?? undefined;
+    if (trackEl) {
+      this._trackResizeObserver = new ResizeObserver(() => {
+        this._updateBandLabelVisibility();
+      });
+      this._trackResizeObserver.observe(trackEl);
+    }
+  }
+
+  private _updateBandLabelVisibility() {
+    const bands = this.renderRoot.querySelectorAll<HTMLElement>('.band-half, .band-single');
+    for (const band of bands) {
+      const label = band.querySelector<HTMLElement>('.band-label');
+      if (!label) continue;
+      const availableWidth = band.clientWidth - 2;
+      const textWidth = label.getBoundingClientRect().width;
+      label.style.visibility =
+        availableWidth > 0 && textWidth <= availableWidth ? 'visible' : 'hidden';
     }
   }
 
@@ -394,6 +434,7 @@ export class HvacFusionStatusCard extends LitElement {
       font-size: 0.7rem;
       font-weight: 700;
       line-height: 1;
+      overflow: hidden;
     }
 
     .band-single {
@@ -407,6 +448,11 @@ export class HvacFusionStatusCard extends LitElement {
       overflow: hidden;
       border: 1px solid rgba(255, 255, 255, 0.15);
       box-sizing: border-box;
+    }
+
+    .band-label {
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .now-needle {
@@ -737,10 +783,10 @@ export class HvacFusionStatusCard extends LitElement {
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="dual-band ${isWide ? 'side-by-side' : ''}">
                             <div class="band-half" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
-                              ${block.cool_to}°
+                              <span class="band-label">${block.cool_to}°</span>
                             </div>
                             <div class="band-half" style="background: ${getHeatColor(block.heat_to)}; color: ${getHeatTextColor(block.heat_to)};">
-                              ${block.heat_to}°
+                              <span class="band-label">${block.heat_to}°</span>
                             </div>
                           </div>
                         </div>
@@ -749,7 +795,7 @@ export class HvacFusionStatusCard extends LitElement {
                       return html`
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: ${getHeatColor(block.heat_to)}; color: ${getHeatTextColor(block.heat_to)};">
-                            ${block.heat_to}°
+                            <span class="band-label">${block.heat_to}°</span>
                           </div>
                         </div>
                       `;
@@ -757,7 +803,7 @@ export class HvacFusionStatusCard extends LitElement {
                       return html`
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: ${getCoolColor(block.cool_to)}; color: ${getCoolTextColor(block.cool_to)};">
-                            ${block.cool_to}°
+                            <span class="band-label">${block.cool_to}°</span>
                           </div>
                         </div>
                       `;
@@ -765,7 +811,7 @@ export class HvacFusionStatusCard extends LitElement {
                       return html`
                         <div class="timeline-block" style="left: ${left}%; width: ${width}%;" title=${tooltip}>
                           <div class="band-single" style="background: #334155; color: #94a3b8;">
-                            OFF
+                            <span class="band-label">OFF</span>
                           </div>
                         </div>
                       `;

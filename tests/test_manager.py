@@ -824,3 +824,156 @@ async def test_register_space_preset_and_restart_restore(hass: HomeAssistant) ->
     assert entity.preset_mode == "Baseline"
     assert "schedule.living_room_butler" not in manager.schedule_entities
     assert manager._dynamic_schedule_unsubs == {}
+    assert hass.data[DOMAIN].get("dynamic_presets", {}) == {}
+
+
+@pytest.mark.asyncio
+async def test_dynamic_space_preset_survives_config_entry_reload(
+    hass: HomeAssistant,
+) -> None:
+    """Verify runtime-registered presets (e.g. Butler) survive an in-place hvac_fusion reload."""
+    from unittest.mock import patch
+
+    from custom_components.hvac_fusion import DOMAIN
+    from pytest_homeassistant.common import MockConfigEntry
+
+    hass.states.async_set("sensor.outdoor_temp", "35.0")
+    hass.states.async_set("sensor.living_room_temp", "68.0")
+    hass.states.async_set(
+        "schedule.lr_baseline",
+        "on",
+        {"data": {"hvac_mode": "heat_cool", "heat_to": 67, "cool_to": 74}},
+    )
+    hass.states.async_set(
+        "schedule.living_room_butler",
+        "on",
+        {"data": {"hvac_mode": "heat_cool", "heat_to": 69, "cool_to": 75}},
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="HVAC Fusion",
+        data={
+            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+            CONF_TARIFFS: {CONF_ELECTRIC_COST_PER_KWH: 0.20},
+            CONF_PRODUCERS: {},
+            CONF_SPACES: [
+                {
+                    CONF_ID: "living_room",
+                    CONF_NAME: "Living Room",
+                    CONF_TEMP_SENSOR: "sensor.living_room_temp",
+                    CONF_PRESETS: {"Baseline": "schedule.lr_baseline"},
+                    CONF_EMITTERS: [],
+                }
+            ],
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.hvac_fusion.frontend_loader.async_register_frontend",
+        new=AsyncMock(),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # Register "Butler" dynamically via service
+        await hass.services.async_call(
+            DOMAIN,
+            "register_space_preset",
+            {
+                "entity_id": "climate.living_room_space",
+                "preset_name": "Butler",
+                "schedule_entity": "schedule.living_room_butler",
+            },
+            blocking=True,
+        )
+        manager_before = hass.data[DOMAIN]["manager"]
+        entity_before = manager_before.space_entities["living_room"]
+        await entity_before.async_set_preset_mode("Butler")
+        assert "Butler" in entity_before.preset_modes
+        assert entity_before.preset_mode == "Butler"
+
+        # Simulate an in-place Options Flow reload
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+
+        manager_after = hass.data[DOMAIN]["manager"]
+        entity_after = manager_after.space_entities["living_room"]
+        assert "Butler" in entity_after.preset_modes
+        assert (
+            entity_after.extra_state_attributes["presets"]["Butler"]
+            == "schedule.living_room_butler"
+        )
+        assert "schedule.living_room_butler" in manager_after.schedule_entities
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_window_sensor_change_triggers_immediate_evaluation(
+    hass: HomeAssistant,
+) -> None:
+    """Verify opening/closing a configured window_sensor immediately triggers evaluation."""
+    from unittest.mock import patch
+
+    from custom_components.hvac_fusion import DOMAIN
+    from custom_components.hvac_fusion.const import CONF_WINDOW_SENSOR
+    from pytest_homeassistant.common import MockConfigEntry
+
+    hass.states.async_set("sensor.outdoor_temp", "35.0")
+    hass.states.async_set("sensor.bedroom_temp", "65.0")
+    hass.states.async_set("binary_sensor.bedroom_windows", "on")
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="HVAC Fusion",
+        data={
+            CONF_OUTDOOR_TEMPERATURE_ENTITY: "sensor.outdoor_temp",
+            CONF_TARIFFS: {CONF_ELECTRIC_COST_PER_KWH: 0.20},
+            CONF_PRODUCERS: {},
+            CONF_SPACES: [
+                {
+                    CONF_ID: "primary_bedroom",
+                    CONF_NAME: "Primary Bedroom",
+                    CONF_TEMP_SENSOR: "sensor.bedroom_temp",
+                    CONF_WINDOW_SENSOR: "binary_sensor.bedroom_windows",
+                    CONF_PRESETS: {},
+                    CONF_EMITTERS: [],
+                }
+            ],
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.hvac_fusion.frontend_loader.async_register_frontend",
+        new=AsyncMock(),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        manager = hass.data[DOMAIN]["manager"]
+        manager.async_evaluate = AsyncMock()
+
+        # Closing the window sensor should trigger immediate evaluation
+        hass.states.async_set("binary_sensor.bedroom_windows", "off")
+        await hass.async_block_till_done()
+        manager.async_evaluate.assert_awaited_once()
+
+        # Unavailable state should be ignored
+        manager.async_evaluate.reset_mock()
+        hass.states.async_set("binary_sensor.bedroom_windows", "unavailable")
+        await hass.async_block_till_done()
+        manager.async_evaluate.assert_not_awaited()
+
+        # Re-opening should trigger immediate evaluation again
+        hass.states.async_set("binary_sensor.bedroom_windows", "on")
+        await hass.async_block_till_done()
+        manager.async_evaluate.assert_awaited_once()
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
